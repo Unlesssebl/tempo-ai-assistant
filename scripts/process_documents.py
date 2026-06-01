@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,14 @@ sys.path.insert(0, str(project_root))
 
 # Автоматическая настройка прокси из .env
 load_dotenv()
+
+# Настройка уровня логирования из переменной окружения LOG_LEVEL
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=log_level
+)
+
 proxy_url = os.getenv("BOT_HTTPS_PROXY") or os.getenv("HTTPS_PROXY")
 force_proxy = os.getenv("BOT_FORCE_PROXY") or os.getenv("FORCE_PROXY")
 

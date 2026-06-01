@@ -18,27 +18,29 @@ cp env.example .env
 # Модели и параметры RAG настраиваются в models_config.yaml
 ```
 
+**Режим отладки (Debug-логирование):**
+По умолчанию детальные логи ротации ключей и моделей скрыты (установлен уровень `INFO`). Для включения подробного отладочного вывода добавьте в `.env` или укажите в терминале при запуске:
+```bash
+LOG_LEVEL=DEBUG
+```
+
 ### 3. Подготовка базы знаний
 
 Положите документы в папку `data/`, затем:
 
 ```bash
 # Полный цикл: чанкинг + векторизация (рекомендуется)
-python scripts/process_documents.py
-
-# Или раздельно:
-python scripts/prepare_chunks.py   # Только чанкинг (с кэшированием)
-python scripts/update_database.py  # Только векторизация и загрузка в Qdrant
+uv run scripts/process_documents.py
 
 # Инициализация базы (без кэша, первый запуск)
-python scripts/init_database.py
+uv run scripts/init_database.py
 ```
 
 ### 4. Запуск
 
 ```bash
 # Telegram-бот (только TG)
-python run_bot.py
+uv run run_bot.py
 # или
 uv run run_tg_bot.py
 

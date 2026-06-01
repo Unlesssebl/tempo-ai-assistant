@@ -14,9 +14,9 @@ text_model:
     disabled: true
   fallbacks:
     # Tier-1: пробуем первой при недоступности основной (gemini-3.1-flash-lite)
-    - "gemma-3-27b-it"
+    - "gemini-3.1-flash-lite"
     # Tier-2: только если Tier-1 тоже недоступна
-    - "gemma-3-12b-it"
+    - "gemini-2.5-flash-lite"
   prompt:
     template: |
       Ты — корпоративный AI-ассистент холдинговой компании ТЭМПО.
@@ -144,7 +144,7 @@ audio_model:
       {time_info}
 
   response_modfallbacks:
-    - "gemma-3-12b-it"
+    - "gemini-3.1-flash-lite"
 
 embedding_model:
   name: "gemini-embedding-2"  # Переопределить через GEMINI_EMBEDDING_MODEL в .env
