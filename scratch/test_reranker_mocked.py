@@ -13,12 +13,9 @@ from src.rag.retrieval.reranker import RerankerOutput
 
 async def test_mocked_search():
     sys.stdout.reconfigure(encoding='utf-8')
-    print("Initializing Config...")
     config = Config.from_env()
     config.use_llm_rerank = True
-    config.use_crag = False  # commented out anyway
     config.use_rag_fusion = False
-    config.use_hyde = False
 
     searcher = SearchService(config=config)
 

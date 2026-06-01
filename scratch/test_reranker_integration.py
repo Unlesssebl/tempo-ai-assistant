@@ -8,10 +8,6 @@ logging.basicConfig(level=logging.INFO)
 
 async def test_search():
     config = Config.from_env()
-    # Force use of reranker for testing
-    config.use_llm_rerank = True
-    config.use_crag = False # we commented it out anyway
-    
     searcher = SearchService(config=config)
     await searcher.initialize()
     

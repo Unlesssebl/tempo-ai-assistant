@@ -48,10 +48,8 @@ class RAGConfig:
     use_hybrid_search: bool = True
     use_rag_fusion: bool = True
     use_llm_rerank: bool = True
-    use_crag: bool = True
     use_semantic_chunking: bool = True
     use_parent_child_chunks: bool = True
-    use_hyde: bool = False
     use_fallback: bool = True
     enable_metrics: bool = True
     use_incremental_updates: bool = True
@@ -66,9 +64,6 @@ class RAGConfig:
     rerank_top_k: int = 25
     rerank_max_docs: int = 50
     rerank_doc_chars: int = 1000
-    crag_max_docs: int = 6
-    crag_doc_chars: int = 1000
-    crag_max_depth: int = 1
     semantic_chunk_size: int = 1000
     semantic_similarity_threshold: float = 0.75
     parent_chunk_size: int = 6000
@@ -91,11 +86,9 @@ class RAGConfig:
             use_hybrid_search=os.getenv("USE_HYBRID_SEARCH", "1" if c.use_hybrid_search else "0") == "1",
             use_rag_fusion=os.getenv("USE_RAG_FUSION", "1" if c.use_rag_fusion else "0") == "1",
             use_llm_rerank=os.getenv("USE_LLM_RERANK", "1" if c.use_llm_rerank else "0") == "1",
-            use_crag=os.getenv("USE_CRAG", "1" if c.use_crag else "0") == "1",
             use_semantic_chunking=os.getenv("USE_SEMANTIC_CHUNKING", "1" if c.use_semantic_chunking else "0") == "1",
             use_parent_child_chunks=os.getenv("USE_PARENT_CHILD_CHUNKS", "1" if c.use_parent_child_chunks else "0")
             == "1",
-            use_hyde=os.getenv("USE_HYDE", "1" if c.use_hyde else "0") == "1",
             use_fallback=os.getenv("USE_FALLBACK", "1" if c.use_fallback else "0") == "1",
             enable_metrics=os.getenv("ENABLE_METRICS", "1" if c.enable_metrics else "0") == "1",
             use_incremental_updates=os.getenv("USE_INCREMENTAL_UPDATES", "1" if c.use_incremental_updates else "0")
@@ -111,9 +104,6 @@ class RAGConfig:
             rerank_top_k=int(os.getenv("RERANK_TOP_K", str(c.rerank_top_k))),
             rerank_max_docs=int(os.getenv("RERANK_MAX_DOCS", str(c.rerank_max_docs))),
             rerank_doc_chars=int(os.getenv("RERANK_DOC_CHARS", str(c.rerank_doc_chars))),
-            crag_max_docs=int(os.getenv("CRAG_MAX_DOCS", str(c.crag_max_docs))),
-            crag_doc_chars=int(os.getenv("CRAG_DOC_CHARS", str(c.crag_doc_chars))),
-            crag_max_depth=int(os.getenv("CRAG_MAX_DEPTH", str(c.crag_max_depth))),
             semantic_chunk_size=int(os.getenv("SEMANTIC_CHUNK_SIZE", str(c.semantic_chunk_size))),
             semantic_similarity_threshold=float(
                 os.getenv(
@@ -534,14 +524,6 @@ class Config:
         self.rag.use_llm_rerank = v
 
     @property
-    def use_crag(self) -> bool:
-        return self.rag.use_crag
-
-    @use_crag.setter
-    def use_crag(self, v):
-        self.rag.use_crag = v
-
-    @property
     def use_semantic_chunking(self) -> bool:
         return self.rag.use_semantic_chunking
 
@@ -556,14 +538,6 @@ class Config:
     @use_parent_child_chunks.setter
     def use_parent_child_chunks(self, v):
         self.rag.use_parent_child_chunks = v
-
-    @property
-    def use_hyde(self) -> bool:
-        return self.rag.use_hyde
-
-    @use_hyde.setter
-    def use_hyde(self, v):
-        self.rag.use_hyde = v
 
     @property
     def use_fallback(self) -> bool:
@@ -692,22 +666,6 @@ class Config:
     @child_chunk_size.setter
     def child_chunk_size(self, v):
         self.rag.child_chunk_size = v
-
-    @property
-    def crag_doc_chars(self) -> int:
-        return self.rag.crag_doc_chars
-
-    @crag_doc_chars.setter
-    def crag_doc_chars(self, v):
-        self.rag.crag_doc_chars = v
-
-    @property
-    def crag_max_depth(self) -> int:
-        return self.rag.crag_max_depth
-
-    @crag_max_depth.setter
-    def crag_max_depth(self, v):
-        self.rag.crag_max_depth = v
 
     @property
     def semantic_chunk_size(self) -> int:
