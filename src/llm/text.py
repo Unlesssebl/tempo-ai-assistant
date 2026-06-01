@@ -240,6 +240,35 @@ class TextLLMService:
                     error_lower = error_str.lower()
                     last_error = e
 
+                    # --- 401/403: Authentication / Permission errors ---
+                    is_auth_error = (
+                        "401" in error_str
+                        or "403" in error_str
+                        or "unauthenticated" in error_lower
+                        or "permission_denied" in error_lower
+                        or "invalid" in error_lower
+                        or "not active" in error_lower
+                        or "deleted or disabled" in error_lower
+                    )
+                    if is_auth_error:
+                        logger.warning(
+                            "🔑 Ошибка авторизации (401/403) для API ключа (модель: %s): %s",
+                            current_model, error_str
+                        )
+                        akm = self.client_manager.api_key_manager
+                        if akm:
+                            # Помечаем ключ как исчерпанный
+                            akm.mark_key_exhausted(current_api_key, f"auth error: {error_str}")
+                            # Ротируем на следующий ключ
+                            new_key = akm.rotate_key(f"auth error: {error_str}")
+                            if new_key:
+                                logger.debug(
+                                    "🔄 Ошибка авторизации: Переключаюсь на следующий API ключ: %s",
+                                    akm.get_masked_key(new_key)
+                                )
+                                continue
+                        raise LLMError(f"Ошибка авторизации API: {error_str}") from e
+
                     # --- 429: Rate limit ---
                     if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                         is_rpm = self._is_rpm_limit(error_lower)
