@@ -284,7 +284,7 @@ class Config:
 
     def reload(self, env_file: str = ".env"):
         """Горячая перезагрузка конфигурации из .env без перезапуска."""
-        load_dotenv(env_file, override=True)
+        load_dotenv(env_file, override=False)
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", self.gemini_api_key)
         self.telegram_token = os.getenv("TELEGRAM_TOKEN", self.telegram_token)
         self.default_city = os.getenv("DEFAULT_CITY", self.default_city)
@@ -329,7 +329,7 @@ class Config:
     @classmethod
     def from_env(cls, env_file: str = ".env", models_yaml: str = "models_config.yaml") -> "Config":
         """Загрузка конфигурации из .env файла с валидацией."""
-        load_dotenv(env_file, override=True)
+        load_dotenv(env_file, override=False)
         telegram_token = os.getenv("TELEGRAM_TOKEN")
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not telegram_token:
