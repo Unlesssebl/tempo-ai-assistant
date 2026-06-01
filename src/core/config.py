@@ -684,14 +684,6 @@ class Config:
         self.rag.semantic_similarity_threshold = v
 
     @property
-    def parent_chunk_size(self) -> int:
-        return self.rag.parent_chunk_size
-
-    @parent_chunk_size.setter
-    def parent_chunk_size(self, v):
-        self.rag.parent_chunk_size = v
-
-    @property
     def bm25_min_token_len(self) -> int:
         return self.rag.bm25_min_token_len
 
