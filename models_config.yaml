@@ -172,7 +172,7 @@ rag:
   chunk_overlap: 200
   search_limit: 10
   fetch_limit: 40
-  use_contextual_retrieval: true
+  use_contextual_retrieval: false
   use_hybrid_search: true
   use_rag_fusion: true
   use_llm_rerank: true
