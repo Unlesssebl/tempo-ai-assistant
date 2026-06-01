@@ -268,17 +268,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                     "session_id": row.get("User_ID", ""),
                     "platform": row.get("Platform", ""),
                     "role": "user",
-                    "message": row.get("Query", "")[:300],
+                    "message": row.get("Query", ""),
                     "timestamp": 0,
                     "metadata": {
-                        "response": row.get("Response", "")[:300],
+                        "response": row.get("Response", ""),
                         "model": row.get("Model", ""),
                         "response_time": row.get("Response_Time_sec", ""),
                     }
                 })
         except Exception as e:
             logger.error(f"CSV read error: {e}")
-        return {"logs": logs, "total": total if 'total' in dir() else 0}
+        return {"logs": logs, "total": total if 'total' in locals() else 0}
 
     @app.get("/api/logs/export")
     async def export_logs_csv(request: Request):
@@ -419,11 +419,13 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
         # Запускаем переиндексацию в фоне
         asyncio.create_task(_reindex_document(str(target_path)))
+        # Запускаем автоматическое обновление index.md в фоне
+        asyncio.create_task(_update_index_file_with_ai(str(target_path), company_id))
 
         return {
             "success": True,
             "path": str(target_path.relative_to(data_path)).replace("\\", "/"),
-            "message": "Документ сохранён. Переиндексация запущена в фоне (займёт 1-3 минуты)."
+            "message": "Документ сохранён. Автоматическое обновление index.md и переиндексация запущены в фоне."
         }
 
     @app.delete("/api/documents")
@@ -484,40 +486,60 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
         for user in users:
             user_id = user["user_id"]
-            platform = user.get("platform") or body.platform
+            user_platform = user.get("platform")  # Может быть "telegram", "max" или None
 
-            try:
-                if (platform == "telegram" or body.platform in ("all", "telegram")) and _tg_app:
-                    try:
-                        await _tg_app.bot.send_message(
-                            chat_id=int(user_id),
-                            text=body.text,
-                            parse_mode="HTML"
+            # Определяем, нужно ли слать в Telegram
+            send_to_tg = False
+            if body.platform == "telegram":
+                send_to_tg = True
+            elif body.platform == "all":
+                if user_platform == "telegram" or not user_platform:
+                    send_to_tg = True
+
+            # Определяем, нужно ли слать в MAX
+            send_to_max = False
+            if body.platform == "max":
+                send_to_max = True
+            elif body.platform == "all":
+                if user_platform == "max" or not user_platform:
+                    send_to_max = True
+
+            success = False
+
+            # Пытаемся отправить в Telegram
+            if send_to_tg and _tg_app:
+                try:
+                    await _tg_app.bot.send_message(
+                        chat_id=int(user_id),
+                        text=body.text,
+                        parse_mode="HTML"
+                    )
+                    sent += 1
+                    success = True
+                    await asyncio.sleep(0.05)
+                except Exception as e:
+                    logger.debug(f"Broadcast: failed to send Telegram message to {user_id}: {e}")
+
+            # Пытаемся отправить в MAX (если еще не отправлено в Telegram)
+            if send_to_max and _config.max_token and not success:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            f"https://botapi.max.ru/messages",
+                            params={"access_token": _config.max_token},
+                            json={"recipient": {"chat_id": user_id}, "text": body.text}
                         )
-                        sent += 1
-                        await asyncio.sleep(0.05)  # Антиспам задержка
-                        continue
-                    except Exception:
-                        pass
+                        if resp.status_code == 200:
+                            sent += 1
+                            success = True
+                            await asyncio.sleep(0.05)
+                        else:
+                            logger.debug(f"Broadcast: failed to send MAX message to {user_id}, status: {resp.status_code}")
+                except Exception as e:
+                    logger.debug(f"Broadcast: failed to send MAX message to {user_id}: {e}")
 
-                if (platform == "max" or body.platform in ("all", "max")) and _config.max_token:
-                    try:
-                        import httpx
-                        async with httpx.AsyncClient() as client:
-                            await client.post(
-                                f"https://botapi.max.ru/messages",
-                                params={"access_token": _config.max_token},
-                                json={"recipient": {"chat_id": user_id}, "text": body.text}
-                            )
-                        sent += 1
-                        await asyncio.sleep(0.05)
-                        continue
-                    except Exception:
-                        pass
-
-                failed += 1
-            except Exception as e:
-                logger.error(f"Broadcast error for {user_id}: {e}")
+            if not success:
                 failed += 1
 
         return {
@@ -655,10 +677,9 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
 Верни ТОЛЬКО готовый Markdown, без пояснений."""
 
     try:
-        import google.generativeai as genai
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
-        model_client = client_manager.get_text_client()
+        model_client = client_manager.get_gemini_client()
         response = model_client.models.generate_content(
             model=_config.text_model,
             contents=prompt,
@@ -682,7 +703,6 @@ async def _reindex_document(file_path: str):
     """Переиндексировать один файл в Qdrant (фоновая задача)."""
     try:
         logger.info(f"Reindexing document: {file_path}")
-        from src.core.clients import ClientManager
         from src.rag.ingestion.document_processor import DocumentProcessor
         from src.rag.ingestion.embeddings import EmbeddingService
 
@@ -691,11 +711,115 @@ async def _reindex_document(file_path: str):
         chunks = processor.prepare_chunks(files=[file])
 
         if chunks:
-            client_manager = ClientManager.get_instance(_config)
-            embedder = EmbeddingService(_config, client_manager)
-            await embedder.embed_and_upsert(chunks)
+            embedder = EmbeddingService(_config)
+            rel_path = str(file.relative_to(Path(_config.data_path))).replace("\\", "/")
+            await embedder.incremental_update(chunks, target_sources=[rel_path])
             logger.info(f"Reindexed {len(chunks)} chunks from {file_path}")
         else:
             logger.warning(f"No chunks created from {file_path}")
     except Exception as e:
         logger.error(f"Reindex error for {file_path}: {e}")
+
+
+async def _update_index_file_with_ai(new_doc_path: str, company_id: Optional[str]):
+    """Автоматическое обновление index.md при помощи ИИ."""
+    try:
+        new_path = Path(new_doc_path)
+        index_path = None
+        
+        # Поиск подходящего index.md
+        if (new_path.parent / "index.md").exists():
+            index_path = new_path.parent / "index.md"
+        elif (new_path.parent.parent / "index.md").exists():
+            index_path = new_path.parent.parent / "index.md"
+        elif company_id:
+            root_company = Path(_config.data_path) / company_id / "index.md"
+            if root_company.exists():
+                index_path = root_company
+        else:
+            root_common = Path(_config.data_path) / "common" / "index.md"
+            if root_common.exists():
+                index_path = root_common
+
+        if not index_path:
+            logger.info(f"Index file not found for {new_doc_path}, skipping AI index update.")
+            return
+
+        if index_path.resolve() == new_path.resolve():
+            logger.info("New document is index.md itself, skipping self-update.")
+            return
+
+        logger.info(f"AI Index Update: Found index file {index_path} for doc {new_path}")
+
+        index_content = index_path.read_text(encoding="utf-8")
+        doc_content = new_path.read_text(encoding="utf-8")
+
+        try:
+            rel_doc_link = str(new_path.relative_to(index_path.parent)).replace("\\", "/")
+            if rel_doc_link.endswith(".md"):
+                rel_doc_link = rel_doc_link[:-3]
+        except Exception:
+            rel_doc_link = new_path.name[:-3] if new_path.name.endswith(".md") else new_path.name
+
+        title = ""
+        for line in doc_content.split("\n"):
+            if line.startswith("title:"):
+                title = line.split(":", 1)[1].strip().strip('"').strip("'")
+                break
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+        if not title:
+            title = new_path.stem.replace("_", " ")
+
+        prompt = f"""Ты корпоративный ИИ-редактор базы знаний.
+Твоя задача — аккуратно обновить существующий навигационный файл `index.md`, добавив ссылку на новый документ.
+
+Существующий `index.md`:
+```markdown
+{index_content}
+```
+
+Новый документ:
+- Название: "{title}"
+- Путь ссылки: "{rel_doc_link}"
+- Краткое содержание нового документа (первые 2000 символов):
+```markdown
+{doc_content[:2000]}
+```
+
+Правила обновления:
+1. Добавь новый документ в список "Доступные материалы", "Документы" или аналогичный список ссылок в файле `index.md`.
+2. Формат ссылки строго WikiLinks с описанием, например: `- **[[Название документа|{rel_doc_link}]]**: Краткое описание о чем этот документ (сформируй по содержанию).`
+3. Сохрани исходный YAML frontmatter в начале `index.md` без изменений, но можешь обновить `last_updated` на текущую дату, если это поле есть (в формате YYYY-MM-DD).
+4. Сохрани ВСЕ остальные разделы и ссылки без изменений.
+5. Верни ТОЛЬКО обновленный текст `index.md` целиком, без каких-либо твоих комментариев или оберток вроде ```markdown.
+"""
+
+        from src.core.clients import ClientManager
+        client_manager = ClientManager.get_instance(_config)
+        model_client = client_manager.get_gemini_client()
+        response = model_client.models.generate_content(
+            model=_config.text_model,
+            contents=prompt,
+        )
+        updated_content = response.text.strip()
+        
+        # Убираем ```markdown и ``` обертки
+        if updated_content.startswith("```markdown"):
+            updated_content = updated_content[11:]
+        elif updated_content.startswith("```"):
+            updated_content = updated_content[3:]
+        if updated_content.endswith("```"):
+            updated_content = updated_content[:-3]
+        updated_content = updated_content.strip()
+
+        if updated_content and len(updated_content) > 50:
+            index_path.write_text(updated_content, encoding="utf-8")
+            logger.info(f"AI Index Update: index.md updated successfully at {index_path}")
+            # Переиндексируем сам index.md
+            asyncio.create_task(_reindex_document(str(index_path)))
+        else:
+            logger.warning("AI Index Update: Model returned empty or too short text, skipping save.")
+    except Exception as e:
+        logger.error(f"Error during AI index update: {e}")

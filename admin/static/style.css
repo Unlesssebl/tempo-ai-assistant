@@ -269,6 +269,10 @@ input[type="text"]:focus, input[type="password"]:focus, .text-input:focus,
   position: relative; overflow: hidden;
 }
 
+.stat-card.clickable {
+  cursor: pointer;
+}
+
 .stat-card::before {
   content: '';
   position: absolute; inset: 0;
@@ -279,6 +283,10 @@ input[type="text"]:focus, input[type="password"]:focus, .text-input:focus,
 
 .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
 .stat-card:hover::before { opacity: 1; }
+
+.stat-card.clickable:hover {
+  border-color: var(--border-accent);
+}
 
 .stat-icon { font-size: 28px; }
 .stat-value { font-size: 32px; font-weight: 700; color: var(--text-primary); }
@@ -498,6 +506,51 @@ input[type="text"]:focus, input[type="password"]:focus, .text-input:focus,
   width: 460px;
   max-width: 90vw;
   animation: fadeInUp 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+
+.modal.modal-lg {
+  width: 800px;
+}
+
+.modal-body {
+  overflow-y: auto;
+}
+
+.detail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.detail-value-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .modal-header {

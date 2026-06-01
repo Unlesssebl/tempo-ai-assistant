@@ -561,7 +561,7 @@ class ChatHistoryManager:
                 "session_id": row["session_id"],
                 "platform": row["platform"],
                 "role": row["role"],
-                "message": row["message"][:500],  # Обрезаем для API
+                "message": row["message"],
                 "timestamp": row["timestamp"],
                 "metadata": meta,
             })

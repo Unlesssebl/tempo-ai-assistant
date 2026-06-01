@@ -666,6 +666,21 @@ async def _handle_message_created(
             logger.debug(f"MAX: ⚠️ Проигнорировано сообщение. Text: '{text[:10]}', chat_id: {chat_id}")
             return
 
+        if assistant.chat_history:
+            # Обновляем время последней активности
+            try:
+                await assistant.chat_history.update_last_activity(session_id, "max")
+            except Exception as e:
+                logger.error(f"Error updating MAX user activity: {e}")
+
+            # Проверяем блокировку
+            try:
+                if await assistant.chat_history.is_user_blocked(session_id):
+                    await client.send_message(chat_id, "⛔ Доступ ограничен.")
+                    return
+            except Exception as e:
+                logger.error(f"Error checking MAX user block status: {e}")
+
         # ── Команды ──────────────────────────────────────────────────────
         if text.lower() in ("/start", "/start@all"):
             await _handle_bot_started(
@@ -676,7 +691,6 @@ async def _handle_message_created(
             return
 
         if text.lower() in ("/clear",):
-            session_id = _get_session_id(user_id)
             try:
                 if assistant.chat_history:
                     await assistant.chat_history.clear_history(session_id, clear_summary=True)

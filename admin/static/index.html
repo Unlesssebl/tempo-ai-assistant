@@ -105,12 +105,12 @@
                         <div class="stat-value" id="statTodayMsg">—</div>
                         <div class="stat-label">Сегодня</div>
                     </div>
-                    <div class="stat-card glass">
+                    <div class="stat-card glass clickable" onclick="showUsersListModal('all')">
                         <div class="stat-icon">👥</div>
                         <div class="stat-value" id="statTotalUsers">—</div>
                         <div class="stat-label">Пользователей</div>
                     </div>
-                    <div class="stat-card glass">
+                    <div class="stat-card glass clickable" onclick="showUsersListModal('active')">
                         <div class="stat-icon">⚡</div>
                         <div class="stat-value" id="statActiveToday">—</div>
                         <div class="stat-label">Активны сегодня</div>
@@ -220,10 +220,11 @@
                                     <th>Платформа</th>
                                     <th>Роль</th>
                                     <th>Сообщение</th>
+                                    <th>Действия</th>
                                 </tr>
                             </thead>
                             <tbody id="logsBody">
-                                <tr><td colspan="5" class="loading-cell">Загрузка...</td></tr>
+                                <tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -291,6 +292,12 @@
                         <textarea class="textarea-input textarea-preview" id="docPreview" rows="20"></textarea>
                         <div id="saveResult" class="hidden"></div>
                     </div>
+                </div>
+
+                <!-- Фильтр по предприятиям -->
+                <div class="tabs" id="docCompanyFilterTabs" style="margin-bottom: 0px; flex-wrap: wrap; gap: 6px;">
+                    <button class="tab active" onclick="filterDocsByCompany('all', this)">🌍 Все документы</button>
+                    <button class="tab" onclick="filterDocsByCompany('common', this)">📁 Общие</button>
                 </div>
 
                 <!-- Documents List -->

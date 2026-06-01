@@ -8,6 +8,9 @@ let currentPage = 'dashboard';
 let usersOffset = 0;
 let logsOffset = 0;
 const PAGE_SIZE = 50;
+let currentLogs = [];
+let allDocuments = [];
+let currentCompanyFilter = 'all';
 
 // Companies dict (будет загружен с сервера или захардкожен)
 const COMPANIES = {
@@ -351,8 +354,7 @@ function showUserModal(userId, currentCompany, isBlocked) {
     `<option value="${k}" ${k===currentCompany?'selected':''}>${v}</option>`
   ).join('');
 
-  document.getElementById('modalTitle').textContent = `Пользователь ${userId}`;
-  document.getElementById('modalBody').innerHTML = `
+  const bodyHtml = `
     <div class="form-group">
       <label>Предприятие</label>
       <select class="select-input" id="modalCompany">
@@ -364,7 +366,8 @@ function showUserModal(userId, currentCompany, isBlocked) {
       Статус: ${isBlocked ? '🚫 Заблокирован' : '✓ Активен'}
     </p>
   `;
-  document.getElementById('modalFooter').innerHTML = `
+
+  const footerHtml = `
     <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
     ${isBlocked
       ? `<button class="btn btn-secondary" onclick="doUnblock('${userId}')">✓ Разблокировать</button>`
@@ -373,7 +376,8 @@ function showUserModal(userId, currentCompany, isBlocked) {
     <button class="btn btn-danger btn-sm" onclick="doClearHistory('${userId}')">🗑 Очистить историю</button>
     <button class="btn btn-primary" onclick="doSetCompany('${userId}')">💾 Сохранить</button>
   `;
-  document.getElementById('modalOverlay').classList.remove('hidden');
+
+  openModal(`Пользователь ${userId}`, bodyHtml, footerHtml, false);
 }
 
 async function doSetCompany(userId) {
@@ -433,20 +437,21 @@ async function searchLogs() {
   try {
     const data = await apiFetch(`/api/logs?${params}`);
     if (!data) return;
-    renderLogsTable(data.logs || []);
+    currentLogs = data.logs || [];
+    renderLogsTable(currentLogs);
     renderLogsPagination(data.total || 0);
   } catch(e) {
-    document.getElementById('logsBody').innerHTML = `<tr><td colspan="5" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    document.getElementById('logsBody').innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
 function renderLogsTable(logs) {
   const tbody = document.getElementById('logsBody');
   if (!logs.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Нет записей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет записей</td></tr>';
     return;
   }
-  tbody.innerHTML = logs.map(log => {
+  tbody.innerHTML = logs.map((log, index) => {
     const time = log.timestamp
       ? new Date(log.timestamp * 1000).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
       : '—';
@@ -456,7 +461,7 @@ function renderLogsTable(logs) {
     const platformTag = log.platform === 'telegram'
       ? '<span class="tag tag-tg">TG</span>'
       : `<span class="tag tag-max">${log.platform}</span>`;
-    const msg = escapeHtml(log.message || '').substring(0, 150);
+    const msg = escapeHtml(log.message || '').substring(0, 100) + (log.message && log.message.length > 100 ? '...' : '');
     return `
       <tr>
         <td style="font-size:11px;white-space:nowrap">${time}</td>
@@ -464,6 +469,11 @@ function renderLogsTable(logs) {
         <td>${platformTag}</td>
         <td>${roleTag}</td>
         <td><span class="msg-preview" title="${escapeHtml(log.message||'')}">${msg}</span></td>
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-ghost btn-sm" onclick="showLogDetailModal(${index})">👁️ Подробнее</button>
+          </div>
+        </td>
       </tr>`;
   }).join('');
 }
@@ -508,34 +518,81 @@ async function loadDocuments() {
     if (!data) return;
     if (loading) loading.classList.add('hidden');
 
-    const docs = data.documents || [];
-    if (!docs.length) {
-      if (grid) grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Документы не найдены</div>';
-      return;
-    }
-
-    if (grid) {
-      grid.innerHTML = docs.map(doc => {
-        const isCommon = !doc.company;
-        const size = doc.size < 1024 ? `${doc.size} B` : doc.size < 1048576 ? `${(doc.size/1024).toFixed(1)} KB` : `${(doc.size/1048576).toFixed(1)} MB`;
-        const modified = doc.modified ? new Date(doc.modified * 1000).toLocaleDateString('ru') : '';
-        return `
-          <div class="doc-card">
-            <div>
-              <span class="company-badge ${isCommon?'common':''}">${doc.company_name}</span>
-            </div>
-            <div class="doc-name">📄 ${doc.name}</div>
-            <div class="doc-meta">${size} · ${modified}</div>
-            <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${doc.path}</div>
-            <div class="doc-actions">
-              <button class="btn btn-danger btn-sm" onclick="deleteDocument('${escapeHtml(doc.path)}')">🗑</button>
-            </div>
-          </div>`;
-      }).join('');
-    }
+    allDocuments = data.documents || [];
+    buildDocFilterTabs();
+    renderDocuments();
   } catch(e) {
     if (loading) loading.textContent = 'Ошибка: ' + e.message;
   }
+}
+
+function buildDocFilterTabs() {
+  const container = document.getElementById('docCompanyFilterTabs');
+  if (!container) return;
+  
+  const commonCount = allDocuments.filter(doc => !doc.company).length;
+  
+  container.innerHTML = `
+    <button class="tab ${currentCompanyFilter === 'all' ? 'active' : ''}" onclick="filterDocsByCompany('all', this)">🌍 Все документы (${allDocuments.length})</button>
+    <button class="tab ${currentCompanyFilter === 'common' ? 'active' : ''}" onclick="filterDocsByCompany('common', this)">📁 Общие (${commonCount})</button>
+  `;
+  
+  Object.entries(COMPANIES).forEach(([id, name]) => {
+    const count = allDocuments.filter(doc => doc.company === id).length;
+    
+    const btn = document.createElement('button');
+    btn.className = `tab ${currentCompanyFilter === id ? 'active' : ''}`;
+    btn.textContent = `${name.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})`;
+    btn.onclick = (e) => filterDocsByCompany(id, btn);
+    container.appendChild(btn);
+  });
+}
+
+function filterDocsByCompany(companyId, btnEl) {
+  currentCompanyFilter = companyId;
+  
+  const container = document.getElementById('docCompanyFilterTabs');
+  if (container) {
+    container.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  }
+  if (btnEl) btnEl.classList.add('active');
+  
+  renderDocuments();
+}
+
+function renderDocuments() {
+  const grid = document.getElementById('docsGrid');
+  if (!grid) return;
+  
+  let docs = allDocuments;
+  if (currentCompanyFilter === 'common') {
+    docs = allDocuments.filter(doc => !doc.company);
+  } else if (currentCompanyFilter !== 'all') {
+    docs = allDocuments.filter(doc => doc.company === currentCompanyFilter);
+  }
+  
+  if (!docs.length) {
+    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);grid-column: 1 / -1;">Документы в этом разделе отсутствуют</div>';
+    return;
+  }
+  
+  grid.innerHTML = docs.map(doc => {
+    const isCommon = !doc.company;
+    const size = doc.size < 1024 ? `${doc.size} B` : doc.size < 1048576 ? `${(doc.size/1024).toFixed(1)} KB` : `${(doc.size/1048576).toFixed(1)} MB`;
+    const modified = doc.modified ? new Date(doc.modified * 1000).toLocaleDateString('ru') : '';
+    return `
+      <div class="doc-card">
+        <div>
+          <span class="company-badge ${isCommon?'common':''}">${doc.company_name}</span>
+        </div>
+        <div class="doc-name">📄 ${doc.name}</div>
+        <div class="doc-meta">${size} · ${modified}</div>
+        <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${doc.path}</div>
+        <div class="doc-actions">
+          <button class="btn btn-danger btn-sm" onclick="deleteDocument('${escapeHtml(doc.path)}')">🗑 Удалить</button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function showDocUpload() {
@@ -736,8 +793,151 @@ async function loadKeys() {
 
 // ── Modal ─────────────────────────────────────────────────────────────────
 
+function openModal(title, bodyHtml, footerHtml, isLarge = false) {
+  const modal = document.querySelector('#modalOverlay .modal');
+  if (modal) {
+    if (isLarge) {
+      modal.classList.add('modal-lg');
+    } else {
+      modal.classList.remove('modal-lg');
+    }
+  }
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = bodyHtml;
+  document.getElementById('modalFooter').innerHTML = footerHtml;
+  document.getElementById('modalOverlay').classList.remove('hidden');
+}
+
 function closeModal() {
   document.getElementById('modalOverlay').classList.add('hidden');
+  const modal = document.querySelector('#modalOverlay .modal');
+  if (modal) modal.classList.remove('modal-lg');
+}
+
+function showLogDetailModal(index) {
+  const log = currentLogs[index];
+  if (!log) return;
+
+  const time = log.timestamp
+    ? new Date(log.timestamp * 1000).toLocaleString('ru')
+    : '—';
+  
+  const platform = log.platform || '?';
+  const platformTag = platform === 'telegram'
+    ? `<span class="tag tag-tg">TG</span>`
+    : `<span class="tag tag-max">${platform.toUpperCase()}</span>`;
+
+  let responseHtml = '';
+  if (log.metadata && log.metadata.response) {
+    responseHtml = `
+      <div class="detail-row" style="margin-top: 12px;">
+        <span class="detail-label">Ответ ассистента</span>
+        <div class="detail-value-box">${escapeHtml(log.metadata.response)}</div>
+      </div>
+    `;
+  }
+
+  const bodyHtml = `
+    <div class="detail-view">
+      <div style="display: flex; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 12px;">
+        <div><span class="detail-label">Время:</span> ${time}</div>
+        <div><span class="detail-label">Платформа:</span> ${platformTag}</div>
+        <div><span class="detail-label">Пользователь:</span> <code style="font-size:12px;">${log.session_id}</code></div>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Текст сообщения (${log.role === 'user' ? 'Пользователь' : 'Ассистент'})</span>
+        <div class="detail-value-box">${escapeHtml(log.message)}</div>
+      </div>
+      ${responseHtml}
+    </div>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-secondary" onclick="viewUserHistory('${log.session_id}')">👤 Диалог пользователя</button>
+    <button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>
+  `;
+
+  openModal('Детали запроса', bodyHtml, footerHtml, true);
+}
+
+function viewUserHistory(userId) {
+  closeModal();
+  showPage('users');
+  const searchInput = document.getElementById('userSearch');
+  if (searchInput) {
+    searchInput.value = userId;
+    filterUsers();
+  }
+}
+
+async function showUsersListModal(type) {
+  const title = type === 'active' ? 'Активные сегодня пользователи' : 'Все зарегистрированные пользователи';
+  openModal(title, '<div class="loading-cell">Загрузка списка пользователей...</div>', '<button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>', true);
+
+  try {
+    const data = await apiFetch('/api/users?limit=1000');
+    if (!data || !data.users) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Данные недоступны</div>';
+      return;
+    }
+
+    let users = data.users;
+    if (type === 'active') {
+      const dayAgo = Date.now() / 1000 - 86400;
+      users = users.filter(u => u.last_activity && u.last_activity >= dayAgo);
+    }
+
+    if (!users.length) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Нет пользователей для отображения</div>';
+      return;
+    }
+
+    const rows = users.map(u => {
+      const lastActivity = u.last_activity
+        ? new Date(u.last_activity * 1000).toLocaleString('ru', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})
+        : '—';
+      const platform = u.platform || '?';
+      const platformTag = platform === 'telegram'
+        ? `<span class="tag tag-tg">TG</span>`
+        : platform === 'max'
+        ? `<span class="tag tag-max">MAX</span>`
+        : `<span class="tag">${platform}</span>`;
+
+      return `
+        <tr>
+          <td><code style="font-size:12px">${u.user_id}</code></td>
+          <td>${platformTag}</td>
+          <td>${u.company_name || '—'}</td>
+          <td style="font-size:12px">${lastActivity}</td>
+          <td>
+            ${u.is_blocked ? '<span class="tag" style="background:rgba(248,113,113,0.15);color:#f87171">🚫 Блок</span>'
+                           : '<span class="tag" style="background:rgba(52,211,153,0.15);color:#34d399">✓ Активен</span>'}
+          </td>
+        </tr>`;
+    }).join('');
+
+    const html = `
+      <div class="table-wrapper" style="max-height: 50vh; overflow-y: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Платформа</th>
+              <th>Предприятие</th>
+              <th>Последняя активность</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = html;
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
