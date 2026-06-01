@@ -52,6 +52,7 @@ class RAGConfig:
     use_semantic_chunking: bool = True
     use_parent_child_chunks: bool = True
     use_hyde: bool = False
+    use_fallback: bool = True
     enable_metrics: bool = True
     use_incremental_updates: bool = True
     contextual_text_model: str = "gemini-1.5-flash"
@@ -95,6 +96,7 @@ class RAGConfig:
             use_parent_child_chunks=os.getenv("USE_PARENT_CHILD_CHUNKS", "1" if c.use_parent_child_chunks else "0")
             == "1",
             use_hyde=os.getenv("USE_HYDE", "1" if c.use_hyde else "0") == "1",
+            use_fallback=os.getenv("USE_FALLBACK", "1" if c.use_fallback else "0") == "1",
             enable_metrics=os.getenv("ENABLE_METRICS", "1" if c.enable_metrics else "0") == "1",
             use_incremental_updates=os.getenv("USE_INCREMENTAL_UPDATES", "1" if c.use_incremental_updates else "0")
             == "1",
@@ -219,7 +221,7 @@ class HelpdeskConfig:
             intraservice_ssl_verify=ssl_verify,
             intraservice_ssl_cert_path=os.getenv(
                 "INTRASERVICE_SSL_CERT_PATH",
-                str(c.intraservice_ssl_cert_path) if c.intraservice_ssl_cert_path else "",
+                c.intraservice_ssl_cert_path if c.intraservice_ssl_cert_path else "",
             ).strip()
             or None,
         )
@@ -411,7 +413,7 @@ class Config:
         default_city = os.getenv("DEFAULT_CITY", "Набережные Челны")
         rag_conf = RAGConfig.from_env()
         if models_config.contextual_retrieval:
-            rag_conf.contextual_text_model = models_config.contextual_retrieval.model
+            rag_conf.contextual_text_model = models_config.contextual_retrieval.model or "gemini-1.5-flash"
             rag_conf.contextual_max_doc_chars = models_config.contextual_retrieval.max_doc_chars
             rag_conf.contextual_parallelism = models_config.contextual_retrieval.parallelism
         return cls(
@@ -419,10 +421,10 @@ class Config:
             gemini_api_key=gemini_api_key,
             api_keys=api_keys,
             text_model_fallbacks=text_model_fallbacks,
-            embedding_model=models_config.embedding_model.name,
-            embedding_models=[m.strip() for m in os.getenv("GEMINI_EMBEDDING_MODEL", models_config.embedding_model.name).split(",") if m.strip()],
-            text_model=models_config.text_model.name,
-            audio_model=models_config.audio_model.name,
+            embedding_model=models_config.embedding_model.name or "gemini-embedding-001",
+            embedding_models=[m.strip() for m in os.getenv("GEMINI_EMBEDDING_MODEL", models_config.embedding_model.name or "gemini-embedding-001").split(",") if m.strip()],
+            text_model=models_config.text_model.name or "gemini-3.1-flash-lite-preview",
+            audio_model=models_config.audio_model.name or "gemini-2.5-flash-native-audio-latest",
             embedding_api_version=models_config.embedding_model.api_version,
             text_api_version=models_config.text_model.api_version,
             live_api_version=models_config.audio_model.api_version,
@@ -562,6 +564,14 @@ class Config:
     @use_hyde.setter
     def use_hyde(self, v):
         self.rag.use_hyde = v
+
+    @property
+    def use_fallback(self) -> bool:
+        return self.rag.use_fallback
+
+    @use_fallback.setter
+    def use_fallback(self, v):
+        self.rag.use_fallback = v
 
     @property
     def enable_metrics(self) -> bool:

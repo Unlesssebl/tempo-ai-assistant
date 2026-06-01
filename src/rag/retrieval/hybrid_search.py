@@ -136,16 +136,28 @@ class HybridSearchService:
             bonus = 0.0
             if not source:
                 continue
+
+            # Инициализация system_hints в метаданных документа при начислении бонусных баллов
+            if "metadata" not in payload or not isinstance(payload["metadata"], dict):
+                payload["metadata"] = {}
+            else:
+                payload["metadata"] = dict(payload["metadata"])
+            payload["metadata"]["system_hints"] = []
             
             # 1. СМАРТ-ПОИСК ЧИСЕЛ (Regex Context Match)
             # Ищем цифры в запросе и проверяем их контекст в документе
             numbers_in_query = re.findall(r'\b\d{1,4}\b', query_lower)
+            has_number_bonus = False
             for num in numbers_in_query:
                 # Паттерн ищет число рядом с ключевым словом (АБК 2, Кабинет 10, Цех 5)
                 context_pattern = rf"(?i)(абк|abk|кабинет|цех|этаж|офис|№|номер|корпус|блок)[\s\-]*{num}\b"
                 if re.search(context_pattern, doc_text) or re.search(context_pattern, source):
                     bonus += 0.15 # Существенный бонус за точное совпадение объекта
                     logger.debug(f"🚀 SMART NUMBER BONUS +0.15 for '{num}' in {source}")
+                    has_number_bonus = True
+
+            if has_number_bonus:
+                payload["metadata"]["system_hints"].append("Содержит искомый номер/кабинет")
 
             # 2. БУСТ ПО ИМЕНИ ФАЙЛА (Acronym Mapping Match)
             filename = source.split("/")[-1].split(".")[0].lower().replace("_", "")
@@ -158,6 +170,7 @@ class HybridSearchService:
             if filename in clean_query or clean_query in filename:
                 bonus += 0.3 # Гарантированный топ для навигационных запросов
                 logger.info(f"🎯 FILENAME MATCH BONUS +0.3 for {source}")
+                payload["metadata"]["system_hints"].append("Точное совпадение имени файла")
             
             # 3. ТЕМАТИЧЕСКИЕ УРОВНИ (Tiers)
             is_target_company = False
