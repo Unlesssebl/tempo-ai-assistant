@@ -417,6 +417,10 @@ class TextLLMService:
                     )
 
                     if is_rotation_trigger and self.model_fallback_manager:
+                        # Помечаем модель на короткий RPM кулдаун при 503/недоступности
+                        cooldown_secs = 10 if ("503" in error_str or "unavailable" in error_lower) else 15
+                        self.model_fallback_manager.mark_model_rpm_limit(current_model, cooldown_secs)
+
                         new_model = self.model_fallback_manager.rotate_model(
                             current_model, f"503/error: {operation_name}"
                         )
@@ -427,6 +431,22 @@ class TextLLMService:
                             if akm:
                                 akm.reset_exhausted_keys()
                             continue
+
+                        # Если все модели оказались заблокированы/в кулдауне, ждем перед повтором
+                        wait_time = self.model_fallback_manager.get_min_cooldown_wait()
+                        if wait_time is not None and wait_time > 0:
+                            logger.info(
+                                "💤 Все модели перегружены или недоступны (503). Жду %.0fs перед повторной попыткой...",
+                                wait_time
+                            )
+                            await asyncio.sleep(wait_time)
+                            akm = self.client_manager.api_key_manager
+                            if akm:
+                                akm.reset_exhausted_keys()
+                            current_model = self.model_fallback_manager.get_best_available_model()
+                            current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                            continue
+
                         raise LLMError(f"Все модели перегружены: {operation_name}") from e
 
                     raise LLMError(f"Ошибка {operation_name}: {e}") from e

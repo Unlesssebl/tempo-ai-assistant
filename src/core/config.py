@@ -399,15 +399,19 @@ class Config:
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", self.gemini_api_key)
         self.telegram_token = os.getenv("TELEGRAM_TOKEN", self.telegram_token)
         self.default_city = _get_str("DEFAULT_CITY", app_y, "default_city", self.default_city)
-        api_keys = []
-        index = 1
-        while True:
-            key = os.getenv(f"GEMINI_API_KEY_{index}")
-            if key:
-                api_keys.append(key)
-                index += 1
-            else:
-                break
+        # Собираем все ключи вида GEMINI_API_KEY_X, сортируя их по числовому индексу
+        env_keys = []
+        for k, v in os.environ.items():
+            if k.startswith("GEMINI_API_KEY_") and v.strip():
+                suffix = k[len("GEMINI_API_KEY_"):]
+                if suffix.isdigit():
+                    env_keys.append((int(suffix), v.strip()))
+        env_keys.sort(key=lambda x: x[0])
+        api_keys = [v for idx, v in env_keys]
+
+        if self.gemini_api_key and self.gemini_api_key not in api_keys:
+            api_keys.insert(0, self.gemini_api_key)
+
         if api_keys:
             self.api_keys = api_keys
             if not self.gemini_api_key:
@@ -445,19 +449,22 @@ class Config:
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not telegram_token:
             raise ConfigError("TELEGRAM_TOKEN не задан в .env")
-        api_keys = []
-        index = 1
-        while True:
-            key = os.getenv(f"GEMINI_API_KEY_{index}")
-            if key:
-                api_keys.append(key)
-                index += 1
-            else:
-                break
+        # Собираем все ключи вида GEMINI_API_KEY_X, сортируя их по числовому индексу
+        env_keys = []
+        for k, v in os.environ.items():
+            if k.startswith("GEMINI_API_KEY_") and v.strip():
+                suffix = k[len("GEMINI_API_KEY_"):]
+                if suffix.isdigit():
+                    env_keys.append((int(suffix), v.strip()))
+        env_keys.sort(key=lambda x: x[0])
+        api_keys = [v for idx, v in env_keys]
+
+        if gemini_api_key and gemini_api_key not in api_keys:
+            api_keys.insert(0, gemini_api_key)
+
         if not api_keys:
-            if not gemini_api_key:
-                raise ConfigError("GEMINI_API_KEY или GEMINI_API_KEY_1 не задан в .env")
-            api_keys.append(gemini_api_key)
+            raise ConfigError("GEMINI_API_KEY или GEMINI_API_KEY_1 не задан в .env")
+
         if not gemini_api_key:
             gemini_api_key = api_keys[0]
         logger.info(f"🔑 Загружено {len(api_keys)} API ключей")
