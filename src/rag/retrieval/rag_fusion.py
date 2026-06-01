@@ -6,6 +6,7 @@ import asyncio
 from typing import Dict, List, Optional
 
 from src.core.config import Config
+from src.core.prompt_manager import PromptManager
 from src.llm.text import TextLLMService
 from src.rag.retrieval.hybrid_search import HybridSearchService
 
@@ -13,16 +14,10 @@ from src.rag.retrieval.hybrid_search import HybridSearchService
 class RAGFusion:
     """Multi-query RAG с RRF fusion."""
 
-    EXPANSION_PROMPT = (
-        "Сгенерируй {n} альтернативные формулировки для поискового запроса. "
-        "Используй синонимы и перефразирование.\n\n"
-        "Оригинальный запрос: {query}\n\n"
-        "Формат ответа: по одной фразе в строке, без нумерации."
-    )
-
-    def __init__(self, config: Config, hybrid_search: HybridSearchService):
+    def __init__(self, config: Config, hybrid_search: HybridSearchService, prompt_manager: PromptManager):
         self.config = config
         self.search = hybrid_search
+        self.prompt_manager = prompt_manager
         self.llm = TextLLMService(config)
 
     async def search_with_fusion(self, query: str, limit: int = 10, company_id: Optional[str] = None) -> List[Dict]:
@@ -73,7 +68,8 @@ class RAGFusion:
     async def _expand_query(self, query: str) -> List[str]:
         if self.config.query_variations <= 0:
             return []
-        prompt = self.EXPANSION_PROMPT.format(n=self.config.query_variations, query=query)
+        prompt_template = self.prompt_manager.get_prompt("query_expansion")
+        prompt = prompt_template.format(n=self.config.query_variations, query=query)
         response = await self.llm.generate(prompt, temperature=0.3)
         variations = [line.strip() for line in response.splitlines() if line.strip()]
         return variations[: self.config.query_variations]

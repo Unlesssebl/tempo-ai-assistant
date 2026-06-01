@@ -7,6 +7,7 @@ from typing import Dict, List, Literal, Tuple
 from pydantic import BaseModel, Field
 
 from src.core.config import Config
+from src.core.prompt_manager import PromptManager
 from src.llm.text import TextLLMService
 
 logger = logging.getLogger(__name__)
@@ -25,32 +26,9 @@ class RerankerOutput(BaseModel):
 class LLMReranker:
     """Cross-encoder reranking через LLM."""
 
-    BATCH_RERANK_PROMPT = """Твоя задача — отобрать наиболее релевантные документы для ответа на запрос пользователя.
-Определи порядок релевантных документов и статус наличия ответа.
-
-ПРАВИЛА ОЦЕНКИ:
-1. ВЫСОКАЯ релевантность: Документ прямо отвечает на вопрос или содержит точные данные (ФИО, телефон, адрес, пункт приказа).
-2. СРЕДНЯЯ релевантность: Документ описывает общую тему запроса, но не содержит прямого ответа.
-3. НИЗКАЯ релевантность (ШУМ): Документ содержит те же слова, но относится к другой теме (например, вопрос про автобус, а документ про базу отдыха, где просто упоминается парковка автобуса).
-4. ОБЯЗАТЕЛЬНО учитывай системные подсказки в скобках. Документы с пометкой о точном совпадении имеют наивысший приоритет.
-
-ПРИМЕР:
-Запрос: "Как вызвать айтишника?"
-Документы: [0] Как создать заявку в HelpDesk [1] Биография директора Айти ТЭМПО [2] Ремонт компьютеров.
-Результат JSON:
-{{
-  "order": [0, 2, 1],
-  "status": "CORRECT"
-}}
-
-Запрос: {query}
-
-ДОКУМЕНТЫ ДЛЯ АНАЛИЗА:
-{documents}
-"""
-
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, prompt_manager: PromptManager):
         self.config = config
+        self.prompt_manager = prompt_manager
         self.llm = TextLLMService(config)
 
     async def rerank_batch(self, query: str, documents: List[Dict], top_k: int) -> Tuple[List[Dict], str]:
@@ -72,8 +50,9 @@ class LLMReranker:
         docs_text = "\n\n".join(docs_list)
 
         try:
+            prompt_template = self.prompt_manager.get_prompt("reranker")
             response = await self.llm.generate_structured(
-                prompt=self.BATCH_RERANK_PROMPT.format(query=query, documents=docs_text),
+                prompt=prompt_template.format(query=query, documents=docs_text),
                 response_schema=RerankerOutput,
                 temperature=0.1,
             )

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from src.core.clients import ClientManager
 from src.core.config import Config
 from src.core.exceptions import SearchError
+from src.core.prompt_manager import PromptManager
 from src.rag.retrieval.fallback import FallbackRetriever
 from src.rag.retrieval.hybrid_search import HybridSearchService
 from src.rag.retrieval.metrics import MetricsCollector
@@ -41,13 +42,14 @@ class SearchResult:
 class SearchService:
     """Аsync поисковая служба с современным pipeline."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, prompt_manager: Optional[PromptManager] = None):
         self.config = config
+        self.prompt_manager = prompt_manager or PromptManager.get_instance()
         self.client_manager = ClientManager.get_instance(config)
         self.hybrid = HybridSearchService(config)
-        self.fusion = RAGFusion(config, self.hybrid)
-        self.reranker = LLMReranker(config)
-        self.fallback = FallbackRetriever(config, self.hybrid)
+        self.fusion = RAGFusion(config, self.hybrid, self.prompt_manager)
+        self.reranker = LLMReranker(config, self.prompt_manager)
+        self.fallback = FallbackRetriever(config, self.hybrid, self.prompt_manager)
         self.metrics = MetricsCollector(config)
         self.smart_links = SmartLinksRetriever(config)
 

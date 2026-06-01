@@ -86,7 +86,9 @@ async def test_system_hints():
     
     # 2. Тестируем LLMReranker
     print("\nTesting LLMReranker...")
-    reranker = LLMReranker(config=config)
+    from src.core.prompt_manager import PromptManager
+    prompt_manager = PromptManager.get_instance()
+    reranker = LLMReranker(config=config, prompt_manager=prompt_manager)
     
     mock_rerank_output = RerankerOutput(order=[0, 1, 2], status="CORRECT")
     
