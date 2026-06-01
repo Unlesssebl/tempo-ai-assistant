@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.venv/
+.env
+
+# Distribution / Build
+dist/
+build/
+*.spec
+
+# Logs
+logs/
+*.log
+
+# Databases & Storage
+*.db
+*.sqlite
+*.sqlite3
+qdrant_storage/
+qdrant_storage_v2/
+.chunks_cache/
+
+# IDE & Tooling
+.vscode/
+.idea/
+.ruff_cache/
+.pyright/
+.cgr-hash-cache.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local Config
+client_config.json
+.env

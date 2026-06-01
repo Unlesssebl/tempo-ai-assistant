@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iTEMPO Admin Panel</title>
+    <meta name="description" content="Панель управления корпоративным ИИ-ассистентом ТЭМПО">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-card glass">
+            <div class="login-logo">
+                <div class="logo-icon">⚙️</div>
+                <h1>iTEMPO Admin</h1>
+                <p>Панель управления ботами</p>
+            </div>
+            <form id="loginForm" onsubmit="doLogin(event)">
+                <div class="form-group">
+                    <label>Пароль администратора</label>
+                    <input type="password" id="loginPassword" placeholder="Введите пароль..." autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary btn-full" id="loginBtn">
+                    <span>Войти</span>
+                </button>
+                <div id="loginError" class="error-msg hidden">Неверный пароль</div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp" class="app hidden">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <div class="logo-badge">iT</div>
+                <div>
+                    <div class="logo-title">iTEMPO</div>
+                    <div class="logo-sub">Admin Panel</div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" onclick="showPage('dashboard', this)">
+                    <span class="nav-icon">📊</span>
+                    <span>Дашборд</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('users', this)">
+                    <span class="nav-icon">👥</span>
+                    <span>Пользователи</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('logs', this)">
+                    <span class="nav-icon">📋</span>
+                    <span>Логи</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('documents', this)">
+                    <span class="nav-icon">📁</span>
+                    <span>Документы</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('broadcast', this)">
+                    <span class="nav-icon">📨</span>
+                    <span>Рассылка</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('keys', this)">
+                    <span class="nav-icon">🔑</span>
+                    <span>API Ключи</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="bot-status-mini">
+                    <div class="status-dot" id="tgStatusDot"></div>
+                    <span id="tgStatusText">Telegram</span>
+                </div>
+                <div class="bot-status-mini">
+                    <div class="status-dot" id="maxStatusDot"></div>
+                    <span id="maxStatusText">MAX</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="doLogout()">Выйти</button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard -->
+            <div id="pageDashboard" class="page active">
+                <div class="page-header">
+                    <h1>Дашборд</h1>
+                    <button class="btn btn-ghost" onclick="loadDashboard()">🔄 Обновить</button>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card glass">
+                        <div class="stat-icon">💬</div>
+                        <div class="stat-value" id="statTotalMsg">—</div>
+                        <div class="stat-label">Всего запросов</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-icon">🌅</div>
+                        <div class="stat-value" id="statTodayMsg">—</div>
+                        <div class="stat-label">Сегодня</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-value" id="statTotalUsers">—</div>
+                        <div class="stat-label">Пользователей</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-icon">⚡</div>
+                        <div class="stat-value" id="statActiveToday">—</div>
+                        <div class="stat-label">Активны сегодня</div>
+                    </div>
+                </div>
+
+                <!-- Bot Status -->
+                <div class="section-grid">
+                    <div class="card glass">
+                        <div class="card-header">
+                            <h3>Статус ботов</h3>
+                        </div>
+                        <div class="bot-status-list">
+                            <div class="bot-item">
+                                <div class="bot-info">
+                                    <span class="bot-icon">🔵</span>
+                                    <span>Telegram Bot</span>
+                                </div>
+                                <span class="status-badge" id="tgBadge">Проверка...</span>
+                            </div>
+                            <div class="bot-item">
+                                <div class="bot-info">
+                                    <span class="bot-icon">🟢</span>
+                                    <span>MAX Bot</span>
+                                </div>
+                                <span class="status-badge" id="maxBadge">Проверка...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass">
+                        <div class="card-header">
+                            <h3>Активность за неделю</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="weeklyChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Chart -->
+                <div class="card glass">
+                    <div class="card-header">
+                        <h3>Запросы за 24 часа</h3>
+                    </div>
+                    <div class="chart-container chart-tall">
+                        <canvas id="hourlyChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Users -->
+            <div id="pageUsers" class="page hidden">
+                <div class="page-header">
+                    <h1>Пользователи</h1>
+                    <div class="header-actions">
+                        <input type="text" class="search-input" placeholder="Поиск по ID..." id="userSearch" oninput="filterUsers()">
+                        <button class="btn btn-ghost" onclick="loadUsers()">🔄 Обновить</button>
+                    </div>
+                </div>
+
+                <div class="card glass">
+                    <div class="table-wrapper">
+                        <table class="data-table" id="usersTable">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Платформа</th>
+                                    <th>Предприятие</th>
+                                    <th>Последняя активность</th>
+                                    <th>Статус</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersBody">
+                                <tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="usersPagination"></div>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div id="pageLogs" class="page hidden">
+                <div class="page-header">
+                    <h1>Логи запросов</h1>
+                    <div class="header-actions">
+                        <input type="text" class="search-input" placeholder="Поиск в сообщениях..." id="logSearch">
+                        <select class="select-input" id="logPlatform">
+                            <option value="">Все платформы</option>
+                            <option value="telegram">Telegram</option>
+                            <option value="max">MAX</option>
+                        </select>
+                        <button class="btn btn-secondary" onclick="searchLogs()">🔍 Поиск</button>
+                        <button class="btn btn-ghost" onclick="exportLogs()">📥 Экспорт CSV</button>
+                    </div>
+                </div>
+
+                <div class="card glass">
+                    <div class="table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Время</th>
+                                    <th>Пользователь</th>
+                                    <th>Платформа</th>
+                                    <th>Роль</th>
+                                    <th>Сообщение</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logsBody">
+                                <tr><td colspan="5" class="loading-cell">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="logsPagination"></div>
+                </div>
+            </div>
+
+            <!-- Documents -->
+            <div id="pageDocuments" class="page hidden">
+                <div class="page-header">
+                    <h1>База знаний</h1>
+                    <button class="btn btn-primary" onclick="showDocUpload()">+ Добавить документ</button>
+                </div>
+
+                <!-- Upload Panel (hidden by default) -->
+                <div id="docUploadPanel" class="card glass hidden">
+                    <div class="card-header">
+                        <h3>Добавить документ</h3>
+                        <button class="btn btn-ghost btn-sm" onclick="hideDocUpload()">✕</button>
+                    </div>
+                    <div class="upload-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Предприятие</label>
+                                <select class="select-input" id="docCompany">
+                                    <option value="">📁 Все предприятия (общий)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Название документа</label>
+                                <input type="text" class="text-input" id="docTitle" placeholder="Например: Дресс-код 2024">
+                            </div>
+                        </div>
+                        <div class="tabs">
+                            <button class="tab active" onclick="switchDocTab('file', this)">📎 Загрузить файл</button>
+                            <button class="tab" onclick="switchDocTab('text', this)">✏️ Ввести текст</button>
+                        </div>
+                        <div id="docTabFile" class="tab-content">
+                            <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="event.preventDefault()">
+                                <div class="drop-icon">📄</div>
+                                <p>Перетащите файл сюда или <label for="fileInput" class="link">выберите</label></p>
+                                <p class="hint">Поддерживается: PDF, DOCX, TXT, MD</p>
+                                <input type="file" id="fileInput" class="hidden" accept=".pdf,.docx,.txt,.md" onchange="fileSelected()">
+                            </div>
+                            <div id="selectedFile" class="selected-file hidden"></div>
+                        </div>
+                        <div id="docTabText" class="tab-content hidden">
+                            <textarea class="textarea-input" id="docTextContent" rows="8" placeholder="Вставьте или введите текст документа..."></textarea>
+                        </div>
+                        <div class="upload-actions">
+                            <button class="btn btn-secondary" onclick="previewDocument()" id="previewBtn">🔍 Обработать через ИИ</button>
+                            <span class="hint">ИИ конвертирует документ в нужный формат</span>
+                        </div>
+                    </div>
+
+                    <!-- Preview Section -->
+                    <div id="docPreviewSection" class="hidden">
+                        <div class="preview-header">
+                            <h4>Предпросмотр (можно редактировать)</h4>
+                            <div class="preview-actions">
+                                <input type="text" class="text-input" id="docFilename" placeholder="Имя файла">
+                                <button class="btn btn-primary" onclick="saveDocument()">💾 Сохранить в базу</button>
+                            </div>
+                        </div>
+                        <textarea class="textarea-input textarea-preview" id="docPreview" rows="20"></textarea>
+                        <div id="saveResult" class="hidden"></div>
+                    </div>
+                </div>
+
+                <!-- Documents List -->
+                <div class="card glass">
+                    <div id="docsLoading" class="loading-cell">Загрузка...</div>
+                    <div id="docsGrid" class="docs-grid"></div>
+                </div>
+            </div>
+
+            <!-- Broadcast -->
+            <div id="pageBroadcast" class="page hidden">
+                <div class="page-header">
+                    <h1>Рассылка сообщений</h1>
+                </div>
+
+                <div class="section-grid-2">
+                    <div class="card glass">
+                        <div class="card-header">
+                            <h3>Новая рассылка</h3>
+                        </div>
+                        <div class="form-vertical">
+                            <div class="form-group">
+                                <label>Текст сообщения (HTML допустим)</label>
+                                <textarea class="textarea-input" id="broadcastText" rows="6" placeholder="Введите текст сообщения...&#10;&#10;Поддерживается: <b>жирный</b>, <i>курсив</i>"></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Платформа</label>
+                                    <select class="select-input" id="broadcastPlatform">
+                                        <option value="all">Все платформы</option>
+                                        <option value="telegram">Только Telegram</option>
+                                        <option value="max">Только MAX</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Предприятие</label>
+                                    <select class="select-input" id="broadcastCompany">
+                                        <option value="">Все предприятия</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Аудитория по активности</label>
+                                <select class="select-input" id="broadcastDays">
+                                    <option value="">Все кто писал когда-либо</option>
+                                    <option value="1">Активные за последний день</option>
+                                    <option value="7">Активные за 7 дней</option>
+                                    <option value="30">Активные за 30 дней</option>
+                                    <option value="90">Активные за 90 дней</option>
+                                </select>
+                            </div>
+                            <div class="broadcast-actions">
+                                <button class="btn btn-secondary" onclick="previewBroadcast()">👁 Предпросмотр</button>
+                                <button class="btn btn-primary" onclick="sendBroadcast()" id="sendBtn">📨 Отправить</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass">
+                        <div class="card-header">
+                            <h3>Предпросмотр</h3>
+                        </div>
+                        <div id="broadcastPreview" class="message-preview">
+                            <div class="preview-placeholder">
+                                Предпросмотр сообщения появится здесь
+                            </div>
+                        </div>
+                        <div id="broadcastResult" class="hidden broadcast-result"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Keys -->
+            <div id="pageKeys" class="page hidden">
+                <div class="page-header">
+                    <h1>API Ключи Gemini</h1>
+                    <button class="btn btn-ghost" onclick="loadKeys()">🔄 Обновить</button>
+                </div>
+
+                <div class="card glass">
+                    <div id="keysBody">
+                        <div class="loading-cell">Загрузка...</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="modalOverlay" class="modal-overlay hidden" onclick="closeModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modalTitle">Действие</h3>
+                <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-footer" id="modalFooter"></div>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toastContainer"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
