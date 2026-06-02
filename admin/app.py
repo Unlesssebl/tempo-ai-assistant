@@ -992,21 +992,60 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             last_updated = datetime.now().strftime("%Y-%m-%d")
         source_file = f"{body.organization}/{body.category}/{file_name}"
 
-        # Формируем YAML Front Matter
-        frontmatter = {
-            "organization": body.organization,
-            "category": body.category,
-            "title": body.title,
-            "description": body.description,
-            "tags": body.tags,
-            "questions_answered": body.questions_answered,
-            "last_updated": last_updated,
-            "source_file": source_file
-        }
+        # Формируем YAML Front Matter в строго заданном порядке с красивым форматированием
+        ordered_keys = [
+            "organization",
+            "category",
+            "title",
+            "description",
+            "tags",
+            "questions_answered",
+            "last_updated",
+            "source_file"
+        ]
+        
+        yaml_lines = []
+        for key in ordered_keys:
+            if key == "organization":
+                val = body.organization
+            elif key == "category":
+                val = body.category
+            elif key == "title":
+                val = body.title
+            elif key == "description":
+                val = body.description
+            elif key == "tags":
+                val = body.tags
+            elif key == "questions_answered":
+                val = body.questions_answered
+            elif key == "last_updated":
+                val = last_updated
+            elif key == "source_file":
+                val = source_file
 
-        # Сериализуем YAML с поддержкой юникода
-        yaml_str = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False)
-        full_content = f"---\n{yaml_str}---\n\n{body.text.strip()}\n"
+            if val is None:
+                if key in ["tags", "questions_answered"]:
+                    val = []
+                else:
+                    val = ""
+
+            if key == "tags":
+                tags_str = ", ".join(f'"{t}"' for t in val)
+                yaml_lines.append(f"tags: [{tags_str}]")
+            elif key == "questions_answered":
+                yaml_lines.append("questions_answered:")
+                if not val:
+                    yaml_lines[-1] = "questions_answered: []"
+                else:
+                    for q in val:
+                        q_escaped = q.replace('"', '\\"')
+                        yaml_lines.append(f'  - "{q_escaped}"')
+            else:
+                val_escaped = str(val).replace('"', '\\"')
+                yaml_lines.append(f'{key}: "{val_escaped}"')
+
+        yaml_str = "\n".join(yaml_lines)
+        full_content = f"---\n{yaml_str}\n---\n\n{body.text.strip()}\n"
 
         data_path = Path(_config.data_path)
         target_dir = data_path / body.organization / body.category
