@@ -51,17 +51,18 @@ CONTACT_TOOL = {
     },
 }
 
-# Настройка ffmpeg для pydub
-try:
-    from static_ffmpeg import add_paths
+import shutil
 
-    add_paths()
-    logger.info("FFmpeg added to PATH")
-except Exception as e:
-    import shutil
-    if shutil.which("ffmpeg"):
-        logger.warning(f"static-ffmpeg initialization failed ({e}), but system ffmpeg is available in PATH.")
-    else:
+# Настройка ffmpeg для pydub
+if shutil.which("ffmpeg"):
+    logger.info("System ffmpeg is available in PATH, using it.")
+else:
+    try:
+        from static_ffmpeg import add_paths
+
+        add_paths()
+        logger.info("FFmpeg added to PATH via static-ffmpeg")
+    except Exception as e:
         logger.error(f"Failed to configure FFmpeg: {e}")
         raise AudioError(f"FFmpeg initialization failed: {e}") from e
 
