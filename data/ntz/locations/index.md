@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации ntz
-last_updated: '2026-06-02'
-organization: ntz
-source_file: ntz/locations/index.md
-title: Оглавление раздела locations
+organization: "ntz"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для АО НТЗ 'ТЭМ-ПО'"
+tags: ["индекс", "навигация", "locations", "ntz"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "ntz/locations/index.md"
 ---
 
-# Раздел LOCATIONS (NTZ)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[Расположение на территории АО НТЗ ТЭМПО|map]]**
+Документы раздела:
+
+- [[Map|map]]

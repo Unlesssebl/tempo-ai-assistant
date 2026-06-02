@@ -1,14 +1,18 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации kmk
-last_updated: '2026-06-02'
-organization: kmk
-source_file: kmk/locations/index.md
-title: Оглавление раздела locations
+organization: "kmk"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для Камский металлургический комбинат (КМК)"
+tags: ["индекс", "навигация", "locations", "kmk"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "kmk/locations/index.md"
 ---
 
-# Раздел LOCATIONS (KMK)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[Справочник кабинетов АО КМК ТЭМПО (АБК-2)|cabinets]]**
-- **[[map|map]]**
+Документы раздела:
+
+- [[Cabinets|cabinets]]
+- [[Map|map]]

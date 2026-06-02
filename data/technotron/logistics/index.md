@@ -1,13 +1,17 @@
 ---
-category: logistics
-description: Навигационный файл раздела logistics организации technotron
-last_updated: '2026-06-02'
-organization: technotron
-source_file: technotron/logistics/index.md
-title: Оглавление раздела logistics
+organization: "technotron"
+category: "logistics"
+title: "Транспорт и логистика (logistics)"
+description: "Навигационный индекс раздела Транспорт и логистика (logistics) для ООО 'Технотрон'"
+tags: ["индекс", "навигация", "logistics", "technotron"]
+questions_answered:
+  - "Какие документы доступны в разделе Транспорт и логистика (logistics)?"
+last_updated: "2026-06-02"
+source_file: "technotron/logistics/index.md"
 ---
 
-# Раздел LOGISTICS (TECHNOTRON)
+# Раздел: Транспорт и логистика (logistics)
 
-Доступные материалы:
-- **[[Вахтовые автобусы холдинга ТЭМПО|shuttle_buses]]**
+Документы раздела:
+
+- [[Shuttle buses|shuttle_buses]]

@@ -1,13 +1,17 @@
 ---
-category: infrastructure
-description: Навигационный файл раздела infrastructure организации it_department
-last_updated: '2026-06-02'
-organization: it_department
-source_file: it_department/infrastructure/index.md
-title: Оглавление раздела infrastructure
+organization: "it_department"
+category: "infrastructure"
+title: "Инфраструктура (infrastructure)"
+description: "Навигационный индекс раздела Инфраструктура (infrastructure) для ИТ-Дирекция"
+tags: ["индекс", "навигация", "infrastructure", "it_department"]
+questions_answered:
+  - "Какие документы доступны в разделе Инфраструктура (infrastructure)?"
+last_updated: "2026-06-02"
+source_file: "it_department/infrastructure/index.md"
 ---
 
-# Раздел INFRASTRUCTURE (IT_DEPARTMENT)
+# Раздел: Инфраструктура (infrastructure)
 
-Доступные материалы:
-- **[[Техническое задание на монтаж волоконно-оптической линии связи и закупку оборудования для нового здания ЦОД|datacenter_tz]]**
+Документы раздела:
+
+- [[Datacenter tz|datacenter_tz]]

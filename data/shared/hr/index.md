@@ -1,18 +1,22 @@
 ---
-category: hr
-description: Навигационный файл раздела hr организации shared
-last_updated: '2026-06-02'
-organization: shared
-source_file: shared/hr/index.md
-title: Оглавление раздела hr
+organization: "shared"
+category: "hr"
+title: "Кадры и мотивация (hr)"
+description: "Навигационный индекс раздела Кадры и мотивация (hr) для Все предприятия (Общее)"
+tags: ["индекс", "навигация", "hr", "shared"]
+questions_answered:
+  - "Какие документы доступны в разделе Кадры и мотивация (hr)?"
+last_updated: "2026-06-02"
+source_file: "shared/hr/index.md"
 ---
 
-# Раздел HR (SHARED)
+# Раздел: Кадры и мотивация (hr)
 
-Доступные материалы:
-- **[[Льготы и компенсации ГК «ТЭМПО»|benefits]]**
-- **[[Программа ДМС|dms]]**
-- **[[График выплат зарплаты|payroll]]**
-- **[[Документы для трудоустройства|recruitment_documents_list]]**
-- **[[Политика больничных|sick_leave]]**
-- **[[Политика отпусков|vacations]]**
+Документы раздела:
+
+- [[Benefits|benefits]]
+- [[Dms|dms]]
+- [[Payroll|payroll]]
+- [[Recruitment documents list|recruitment_documents_list]]
+- [[Sick leave|sick_leave]]
+- [[Vacations|vacations]]

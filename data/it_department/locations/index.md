@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации it_department
-last_updated: '2026-06-02'
-organization: it_department
-source_file: it_department/locations/index.md
-title: Оглавление раздела locations
+organization: "it_department"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для ИТ-Дирекция"
+tags: ["индекс", "навигация", "locations", "it_department"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "it_department/locations/index.md"
 ---
 
-# Раздел LOCATIONS (IT_DEPARTMENT)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[map|map]]**
+Документы раздела:
+
+- [[Map|map]]

@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации td
-last_updated: '2026-06-02'
-organization: td
-source_file: td/locations/index.md
-title: Оглавление раздела locations
+organization: "td"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для АО ТД 'ТЭМПО'"
+tags: ["индекс", "навигация", "locations", "td"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "td/locations/index.md"
 ---
 
-# Раздел LOCATIONS (TD)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[map|map]]**
+Документы раздела:
+
+- [[Map|map]]

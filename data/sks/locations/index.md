@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации sks
-last_updated: '2026-06-02'
-organization: sks
-source_file: sks/locations/index.md
-title: Оглавление раздела locations
+organization: "sks"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для АО СКС 'ТЭМПО'"
+tags: ["индекс", "навигация", "locations", "sks"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "sks/locations/index.md"
 ---
 
-# Раздел LOCATIONS (SKS)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[map|map]]**
+Документы раздела:
+
+- [[Map|map]]

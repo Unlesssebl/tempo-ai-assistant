@@ -1,17 +1,21 @@
 ---
-category: company
-description: Навигационный файл раздела company организации shared
-last_updated: '2026-06-02'
-organization: shared
-source_file: shared/company/index.md
-title: Оглавление раздела company
+organization: "shared"
+category: "company"
+title: "О компании (company)"
+description: "Навигационный индекс раздела О компании (company) для Все предприятия (Общее)"
+tags: ["индекс", "навигация", "company", "shared"]
+questions_answered:
+  - "Какие документы доступны в разделе О компании (company)?"
+last_updated: "2026-06-02"
+source_file: "shared/company/index.md"
 ---
 
-# Раздел COMPANY (SHARED)
+# Раздел: О компании (company)
 
-Доступные материалы:
-- **[[АБК-2 (включая Отдел кадров)|abk_2]]**
-- **[[АБК-3 (Административно-бытовой комплекс №3)|abk_3]]**
-- **[[Компании холдинга ТЭМПО|holding_companies]]**
-- **[[Руководство холдинга ТЭМПО|leadership]]**
-- **[[Социальные объекты и базы отдыха|social]]**
+Документы раздела:
+
+- [[Abk 2|abk_2]]
+- [[Abk 3|abk_3]]
+- [[Holding companies|holding_companies]]
+- [[Leadership|leadership]]
+- [[Social|social]]

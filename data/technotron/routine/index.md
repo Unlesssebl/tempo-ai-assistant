@@ -1,13 +1,17 @@
 ---
-category: routine
-description: Навигационный файл раздела routine организации technotron
-last_updated: '2026-06-02'
-organization: technotron
-source_file: technotron/routine/index.md
-title: Оглавление раздела routine
+organization: "technotron"
+category: "routine"
+title: "Внутренний распорядок и регламенты (routine)"
+description: "Навигационный индекс раздела Внутренний распорядок и регламенты (routine) для ООО 'Технотрон'"
+tags: ["индекс", "навигация", "routine", "technotron"]
+questions_answered:
+  - "Какие документы доступны в разделе Внутренний распорядок и регламенты (routine)?"
+last_updated: "2026-06-02"
+source_file: "technotron/routine/index.md"
 ---
 
-# Раздел ROUTINE (TECHNOTRON)
+# Раздел: Внутренний распорядок и регламенты (routine)
 
-Доступные материалы:
-- **[[График обедов Технотрон|canteen_schedule]]**
+Документы раздела:
+
+- [[Canteen schedule|canteen_schedule]]

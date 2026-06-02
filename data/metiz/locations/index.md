@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации metiz
-last_updated: '2026-06-02'
-organization: metiz
-source_file: metiz/locations/index.md
-title: Оглавление раздела locations
+organization: "metiz"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для ООО Технотрон-Метиз"
+tags: ["индекс", "навигация", "locations", "metiz"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "metiz/locations/index.md"
 ---
 
-# Раздел LOCATIONS (METIZ)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[map|map]]**
+Документы раздела:
+
+- [[Map|map]]

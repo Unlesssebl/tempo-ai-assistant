@@ -1,13 +1,17 @@
 ---
-category: locations
-description: Навигационный файл раздела locations организации kzmk
-last_updated: '2026-06-02'
-organization: kzmk
-source_file: kzmk/locations/index.md
-title: Оглавление раздела locations
+organization: "kzmk"
+category: "locations"
+title: "Расположение и навигация (locations)"
+description: "Навигационный индекс раздела Расположение и навигация (locations) для АО КЗМК 'ТЭМПО'"
+tags: ["индекс", "навигация", "locations", "kzmk"]
+questions_answered:
+  - "Какие документы доступны в разделе Расположение и навигация (locations)?"
+last_updated: "2026-06-02"
+source_file: "kzmk/locations/index.md"
 ---
 
-# Раздел LOCATIONS (KZMK)
+# Раздел: Расположение и навигация (locations)
 
-Доступные материалы:
-- **[[map|map]]**
+Документы раздела:
+
+- [[Map|map]]

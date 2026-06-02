@@ -1,15 +1,19 @@
 ---
-category: it_support
-description: Навигационный файл раздела it_support организации shared
-last_updated: '2026-06-02'
-organization: shared
-source_file: shared/it_support/index.md
-title: Оглавление раздела it_support
+organization: "shared"
+category: "it_support"
+title: "ИТ и рабочее место (it_support)"
+description: "Навигационный индекс раздела ИТ и рабочее место (it_support) для Все предприятия (Общее)"
+tags: ["индекс", "навигация", "it_support", "shared"]
+questions_answered:
+  - "Какие документы доступны в разделе ИТ и рабочее место (it_support)?"
+last_updated: "2026-06-02"
+source_file: "shared/it_support/index.md"
 ---
 
-# Раздел IT_SUPPORT (SHARED)
+# Раздел: ИТ и рабочее место (it_support)
 
-Доступные материалы:
-- **[[Требования к закупке ПК и оргтехники|hardware]]**
-- **[[ИТ-поддержка и инструкция HelpDesk|helpdesk]]**
-- **[[Политика электронной почты|security]]**
+Документы раздела:
+
+- [[Hardware|hardware]]
+- [[Helpdesk|helpdesk]]
+- [[Security|security]]
