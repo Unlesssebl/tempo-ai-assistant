@@ -40,3 +40,4 @@ Thumbs.db
 # Local Config
 client_config.json
 .env
+.env_old
