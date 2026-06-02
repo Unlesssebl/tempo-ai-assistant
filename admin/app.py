@@ -598,7 +598,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment != "common" else "Общие документы"
             
             for item in sorted(target_dir.iterdir()):
-                rel_path = str(item.relative_to(data_path)).replace("\\", "/")
+                rel_path = str(item.resolve().relative_to(data_path.resolve())).replace("\\", "/")
                 if item.is_dir() and item.name not in {".chunks_cache"}:
                     items.append({
                         "name": item.name,
@@ -1036,7 +1036,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         is_super = user["role"] == "superadmin" or "all" in user_company_ids
         if not is_super:
             try:
-                rel = source_path.relative_to(data_path)
+                rel = source_path.resolve().relative_to(data_path.resolve())
                 if not rel.parts:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
                 first_part = rel.parts[0]
@@ -1053,7 +1053,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
-        old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
+        old_rel_path = str(source_path.resolve().relative_to(data_path.resolve())).replace("\\", "/")
 
         # Определяем целевую папку
         if body.company_id:
@@ -1190,7 +1190,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             filtered_index = []
             for path in to_index:
                 try:
-                    rel = Path(path).relative_to(data_path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
                     if rel.parts:
                         first_part = rel.parts[0]
                         if first_part == "common" and "common" in user_company_ids:
@@ -1218,7 +1218,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         rel_to_index = []
         for path in to_index:
             try:
-                rel = Path(path).relative_to(data_path)
+                rel = Path(path).resolve().relative_to(data_path.resolve())
                 rel_to_index.append(str(rel).replace("\\", "/"))
             except ValueError:
                 rel_to_index.append(path)
@@ -1251,7 +1251,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             # Фильтруем to_index (абсолютные пути)
             for path in list(_pending_changes["to_index"]):
                 try:
-                    rel = Path(path).relative_to(data_path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
                     if rel.parts:
                         first_part = rel.parts[0]
                         if first_part == "common" and "common" in user_company_ids:
