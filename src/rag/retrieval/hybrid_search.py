@@ -7,9 +7,11 @@ import logging
 from typing import Dict, List, Optional, Any
 
 from qdrant_client import models
+from cachetools import TTLCache
 
 from src.core.clients import ClientManager
 from src.core.config import Config
+from src.rag.ingestion.embeddings import AdaptiveRateLimiter
 from src.rag.retrieval.fuzzy_name_matcher import FuzzyNameMatcher
 from src.rag.retrieval.scorer import BusinessLogicScorer
 
@@ -35,6 +37,10 @@ class HybridSearchService:
         self._initialized = False
         
         self.name_matcher = FuzzyNameMatcher()
+        
+        # Кэш для эмбеддингов запросов и rate limiter (100 RPM, 30k TPM)
+        self._embedding_cache = TTLCache(maxsize=1000, ttl=3600)
+        self._rate_limiter = AdaptiveRateLimiter(max_rpm=100, max_tpm=30000)
 
     async def initialize(self):
         """Явная инициализация при старте сервиса (построение словаря FuzzyNameMatcher).
@@ -108,45 +114,55 @@ class HybridSearchService:
         query_list = None
         
         # 1. Генерация плотного вектора
-        for attempt in range(max_retries):
-            current_key = akm.get_current_key() if akm else self.config.gemini_api_key
-            embedder = self.client_manager.get_embedder(api_key=current_key)
-            
-            try:
-                query_vector = await loop.run_in_executor(
-                    None,
-                    lambda: embedder.encode(query, task_type="RETRIEVAL_QUERY", normalize=True),
-                )
-                
-                if query_vector.ndim > 1:
-                    query_vector = query_vector[0]
-                query_list = query_vector.tolist()
-                break
-                
-            except Exception as e:
-                last_error = e
-                err_str = str(e).upper()
-                is_rate_error = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED"])
-                
-                if is_rate_error and akm:
-                    logger.warning(
-                        "Rate limit (429) для embeddings (попытка %d/%d). Ротация ключа... (Key: ...%s)",
-                        attempt + 1, max_retries, current_key[-4:]
-                    )
-                    akm.mark_key_exhausted(current_key, f"embedding rate limit: {err_str}")
-                    
-                    if akm.is_all_exhausted():
-                        logger.error("Все API ключи исчерпаны для эмбеддингов!")
-                        from src.core.exceptions import SearchError
-                        raise SearchError(f"Embedding quota exceeded for all keys: {e}") from e
-                    continue
-                
-                logger.error("Ошибка при генерации вектора запроса: %s", e)
-                from src.core.exceptions import SearchError
-                raise SearchError(f"Vector generation failed: {e}") from e
+        cache_key = query.strip().lower()
+        if cache_key in self._embedding_cache:
+            query_list = self._embedding_cache[cache_key]
         else:
-            from src.core.exceptions import SearchError
-            raise SearchError(f"Failed to generate vector after {max_retries} attempts.") from last_error
+            for attempt in range(max_retries):
+                current_key = akm.get_current_key() if akm else self.config.gemini_api_key
+                embedder = self.client_manager.get_embedder(api_key=current_key)
+                
+                estimated_tokens = len(query) // 2
+                await self._rate_limiter.acquire(request_count=1, token_count=estimated_tokens)
+                
+                try:
+                    query_vector = await loop.run_in_executor(
+                        None,
+                        lambda: embedder.encode(query, task_type="RETRIEVAL_QUERY", normalize=True),
+                    )
+                    
+                    if query_vector.ndim > 1:
+                        query_vector = query_vector[0]
+                    query_list = query_vector.tolist()
+                    self._embedding_cache[cache_key] = query_list
+                    break
+                    
+                except Exception as e:
+                    last_error = e
+                    err_str = str(e).upper()
+                    is_rate_error = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "QUOTA"])
+                    
+                    if is_rate_error:
+                        self._rate_limiter.force_wait(65.0)
+                        if akm:
+                            logger.warning(
+                                "Rate limit (429) для embeddings (попытка %d/%d). Ротация ключа... (Key: ...%s)",
+                                attempt + 1, max_retries, current_key[-4:]
+                            )
+                            akm.mark_key_exhausted(current_key, f"embedding rate limit: {err_str}")
+                            
+                            if akm.is_all_exhausted():
+                                logger.error("Все API ключи исчерпаны для эмбеддингов!")
+                                from src.core.exceptions import SearchError
+                                raise SearchError(f"Embedding quota exceeded for all keys: {e}") from e
+                        continue
+                    
+                    logger.error("Ошибка при генерации вектора запроса: %s", e)
+                    from src.core.exceptions import SearchError
+                    raise SearchError(f"Vector generation failed: {e}") from e
+            else:
+                from src.core.exceptions import SearchError
+                raise SearchError(f"Failed to generate vector after {max_retries} attempts.") from last_error
 
         # 2. Генерация разреженного вектора
         def get_sparse():
