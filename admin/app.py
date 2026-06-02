@@ -104,33 +104,53 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     # ─── Auth ─────────────────────────────────────────────────────────────
 
-    def check_auth(request: Request) -> bool:
-        """Проверка Basic Auth или сессионного токена."""
-        # Проверяем cookie-токен
+    _active_sessions = {} # token -> user dict
+
+    async def check_auth(request: Request) -> Optional[Dict]:
+        """Возвращает пользователя, если он авторизован, иначе None."""
         token = request.cookies.get("admin_token")
-        if token and token == _get_valid_token():
-            return True
-        # Проверяем Basic Auth
+        if token and token in _active_sessions:
+            return _active_sessions[token]
+        
+        # Проверяем Basic Auth (для обратной совместимости/скриптов)
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Basic "):
             import base64
             try:
                 creds = base64.b64decode(auth[6:]).decode()
-                _, pwd = creds.split(":", 1)
-                if pwd == _config.admin_password:
-                    return True
+                username, pwd = creds.split(":", 1)
+                if _assistant and _assistant.chat_history:
+                    admin_user = await _assistant.chat_history.get_admin_user_by_username(username)
+                    if admin_user:
+                        from src.storage.chat_history import verify_password
+                        if verify_password(admin_user["password_hash"], pwd):
+                            return admin_user
             except Exception:
                 pass
-        return False
+        return None
 
-    def _get_valid_token() -> str:
-        """Получить валидный токен сессии (детерминированный на основе пароля)."""
-        import hashlib
-        return hashlib.sha256(f"itempo_admin_{_config.admin_password}".encode()).hexdigest()[:32]
-
-    def require_auth(request: Request):
-        if not check_auth(request):
+    async def require_auth(request: Request) -> Dict:
+        user = await check_auth(request)
+        if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
+        return user
+
+    def require_permission(permission: str):
+        async def dependency(user: Dict = Depends(require_auth)):
+            if user["role"] == "superadmin":
+                return user
+            if permission in user["permissions"]:
+                return user
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return dependency
+
+    async def check_bot_user_company_access(user_id: str, admin_user: Dict):
+        if admin_user["role"] == "superadmin" or not admin_user["company_id"] or admin_user["company_id"] == "all":
+            return True
+        user_company = await _assistant.chat_history.get_user_company(user_id)
+        if user_company == admin_user["company_id"]:
+            return True
+        raise HTTPException(status_code=403, detail="Нет прав на управление пользователем другой организации")
 
     # ─── Главная страница ─────────────────────────────────────────────────
 
@@ -147,34 +167,171 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     async def login(request: Request):
         """Авторизация — возвращает токен сессии."""
         body = await request.json()
+        username = body.get("username", "")
         password = body.get("password", "")
-        if password != _config.admin_password:
-            raise HTTPException(status_code=401, detail="Неверный пароль")
-        token = _get_valid_token()
-        response = JSONResponse({"success": True, "token": token})
+        
+        if not username or not password:
+            raise HTTPException(status_code=400, detail="Не указаны имя пользователя или пароль")
+            
+        if not _assistant or not _assistant.chat_history:
+            raise HTTPException(status_code=503, detail="База данных недоступна")
+            
+        admin_user = await _assistant.chat_history.get_admin_user_by_username(username)
+        if not admin_user:
+            raise HTTPException(status_code=401, detail="Неверное имя пользователя или пароль")
+            
+        from src.storage.chat_history import verify_password
+        if not verify_password(admin_user["password_hash"], password):
+            raise HTTPException(status_code=401, detail="Неверное имя пользователя или пароль")
+            
+        # Генерируем случайный безопасный токен
+        token = secrets.token_hex(32)
+        _active_sessions[token] = {
+            "id": admin_user["id"],
+            "username": admin_user["username"],
+            "role": admin_user["role"],
+            "company_id": admin_user["company_id"],
+            "permissions": admin_user["permissions"],
+        }
+        
+        response = JSONResponse({
+            "success": True, 
+            "token": token, 
+            "user": {
+                "username": admin_user["username"],
+                "role": admin_user["role"],
+                "company_id": admin_user["company_id"],
+                "permissions": admin_user["permissions"],
+            }
+        })
         response.set_cookie("admin_token", token, max_age=86400 * 7, httponly=True)
         return response
 
     @app.post("/api/auth/logout")
-    async def logout():
+    async def logout(request: Request):
+        token = request.cookies.get("admin_token")
+        if token:
+            _active_sessions.pop(token, None)
         response = JSONResponse({"success": True})
         response.delete_cookie("admin_token")
         return response
 
     @app.get("/api/auth/check")
     async def auth_check(request: Request):
-        return {"authenticated": check_auth(request)}
+        user = await check_auth(request)
+        if user:
+            return {
+                "authenticated": True, 
+                "user": {
+                    "username": user["username"],
+                    "role": user["role"],
+                    "company_id": user["company_id"],
+                    "permissions": user["permissions"],
+                }
+            }
+        return {"authenticated": False}
+
+    # ─── Управление администраторами панели (только superadmin) ───────────
+
+    class AdminUserCreate(BaseModel):
+        username: str
+        password: str
+        role: str
+        company_id: Optional[str] = None
+        permissions: List[str]
+
+    class AdminUserUpdate(BaseModel):
+        username: str
+        password: Optional[str] = None
+        role: str
+        company_id: Optional[str] = None
+        permissions: List[str]
+
+    @app.get("/api/admin/users")
+    async def get_admin_users(user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        users_list = await _assistant.chat_history.get_all_admin_users()
+        return {"users": users_list}
+
+    @app.post("/api/admin/users")
+    async def create_admin(body: AdminUserCreate, user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        
+        # Проверяем уникальность логина
+        existing = await _assistant.chat_history.get_admin_user_by_username(body.username)
+        if existing:
+            raise HTTPException(status_code=400, detail="Пользователь с таким именем уже существует")
+            
+        from src.storage.chat_history import hash_password
+        pwd_hash = hash_password(body.password)
+        
+        new_id = await _assistant.chat_history.create_admin_user(
+            username=body.username,
+            password_hash=pwd_hash,
+            role=body.role,
+            company_id=body.company_id,
+            permissions=body.permissions
+        )
+        return {"success": True, "id": new_id}
+
+    @app.put("/api/admin/users/{admin_id}")
+    async def update_admin(admin_id: int, body: AdminUserUpdate, user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Forbidden")
+            
+        pwd_hash = None
+        if body.password:
+            from src.storage.chat_history import hash_password
+            pwd_hash = hash_password(body.password)
+        
+        await _assistant.chat_history.update_admin_user(
+            user_id=admin_id,
+            username=body.username,
+            password_hash=pwd_hash,
+            role=body.role,
+            company_id=body.company_id,
+            permissions=body.permissions
+        )
+        
+        # Обновляем активные сессии измененного пользователя, если он залогинен
+        for token, active_user in list(_active_sessions.items()):
+            if active_user["id"] == admin_id:
+                active_user["username"] = body.username
+                active_user["role"] = body.role
+                active_user["company_id"] = body.company_id
+                active_user["permissions"] = body.permissions
+                
+        return {"success": True}
+
+    @app.delete("/api/admin/users/{admin_id}")
+    async def delete_admin(admin_id: int, user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Forbidden")
+            
+        # Нельзя удалить самого себя
+        if admin_id == user["id"]:
+            raise HTTPException(status_code=400, detail="Нельзя удалить собственную учетную запись")
+            
+        await _assistant.chat_history.delete_admin_user(admin_id)
+        
+        # Удаляем активные сессии удаленного пользователя
+        for token, active_user in list(_active_sessions.items()):
+            if active_user["id"] == admin_id:
+                _active_sessions.pop(token, None)
+                
+        return {"success": True}
 
     # ─── Дашборд / Статистика ─────────────────────────────────────────────
 
     @app.get("/api/stats")
-    async def get_stats(request: Request):
-        require_auth(request)
+    async def get_stats(user: Dict = Depends(require_permission("view_stats"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "База данных не подключена"}, status_code=503)
         try:
-            stats = await _assistant.chat_history.get_stats()
-            # Добавляем статус ботов
+            company_id = None if user["role"] == "superadmin" or user["company_id"] == "all" else user["company_id"]
+            stats = await _assistant.chat_history.get_stats(company_id=company_id)
             stats["tg_status"] = "online" if _tg_app and _tg_app.running else "offline"
             stats["max_status"] = "online" if _max_running else "offline"
             return stats
@@ -186,19 +343,18 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     @app.get("/api/users")
     async def get_users(
-        request: Request,
         limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
+        user: Dict = Depends(require_permission("manage_bot_users")),
     ):
-        require_auth(request)
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "База данных не подключена"}, status_code=503)
         from src.core.constants import COMPANIES
         try:
-            users = await _assistant.chat_history.get_all_users(limit=limit, offset=offset)
-            total = await _assistant.chat_history.get_users_count()
-            # Добавляем читаемое название компании
+            company_id = None if user["role"] == "superadmin" or user["company_id"] == "all" else user["company_id"]
+            users = await _assistant.chat_history.get_all_users(limit=limit, offset=offset, company_id=company_id)
+            total = await _assistant.chat_history.get_users_count(company_id=company_id)
             for u in users:
                 u["company_name"] = COMPANIES.get(u["company_id"], u["company_id"]) if u["company_id"] else None
             if search:
@@ -213,10 +369,13 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         company_id: str
 
     @app.post("/api/users/{user_id}/company")
-    async def update_user_company(user_id: str, body: CompanyUpdate, request: Request):
-        require_auth(request)
+    async def update_user_company(user_id: str, body: CompanyUpdate, user: Dict = Depends(require_permission("manage_bot_users"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        await check_bot_user_company_access(user_id, user)
+        # Ограничение по компании: ограниченный админ не может менять компанию пользователя на чужую
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all" and body.company_id != user["company_id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
         try:
             await _assistant.chat_history.set_user_company(user_id, body.company_id)
             return {"success": True}
@@ -224,10 +383,10 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/api/users/{user_id}/block")
-    async def block_user(user_id: str, request: Request):
-        require_auth(request)
+    async def block_user(user_id: str, user: Dict = Depends(require_permission("manage_bot_users"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        await check_bot_user_company_access(user_id, user)
         try:
             await _assistant.chat_history.block_user(user_id)
             return {"success": True}
@@ -235,10 +394,10 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/api/users/{user_id}/unblock")
-    async def unblock_user(user_id: str, request: Request):
-        require_auth(request)
+    async def unblock_user(user_id: str, user: Dict = Depends(require_permission("manage_bot_users"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        await check_bot_user_company_access(user_id, user)
         try:
             await _assistant.chat_history.unblock_user(user_id)
             return {"success": True}
@@ -246,10 +405,10 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.delete("/api/users/{user_id}/history")
-    async def clear_user_history(user_id: str, request: Request):
-        require_auth(request)
+    async def clear_user_history(user_id: str, user: Dict = Depends(require_permission("manage_bot_users"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        await check_bot_user_company_access(user_id, user)
         try:
             await _assistant.chat_history.clear_history(user_id, clear_summary=True)
             return {"success": True}
@@ -260,7 +419,6 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     @app.get("/api/logs")
     async def get_logs(
-        request: Request,
         limit: int = 50,
         offset: int = 0,
         user_id: Optional[str] = None,
@@ -268,19 +426,24 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         search: Optional[str] = None,
         date_from: Optional[float] = None,
         date_to: Optional[float] = None,
+        user: Dict = Depends(require_permission("view_logs")),
     ):
-        require_auth(request)
         if not _assistant or not _assistant.chat_history:
-            # Fallback — читаем CSV файл
+            # Fallback — читаем CSV файл (только если суперадмин, иначе для локальных админов CSV не фильтруется)
+            if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+                return JSONResponse({"error": "Чтение логов из CSV недоступно для локальных администраторов"}, status_code=403)
             return _read_csv_logs(limit, offset, search)
         try:
+            company_id = None if user["role"] == "superadmin" or user["company_id"] == "all" else user["company_id"]
             logs = await _assistant.chat_history.get_logs(
                 limit=limit, offset=offset,
                 user_id=user_id, platform=platform,
-                search=search, date_from=date_from, date_to=date_to
+                search=search, date_from=date_from, date_to=date_to,
+                company_id=company_id
             )
             total = await _assistant.chat_history.get_logs_count(
-                user_id=user_id, platform=platform, search=search
+                user_id=user_id, platform=platform, search=search,
+                company_id=company_id
             )
             return {"logs": logs, "total": total}
         except Exception as e:
@@ -321,8 +484,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         return {"logs": logs, "total": total if 'total' in locals() else 0}
 
     @app.get("/api/logs/export")
-    async def export_logs_csv(request: Request):
-        require_auth(request)
+    async def export_logs_csv(user: Dict = Depends(require_permission("view_logs"))):
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            raise HTTPException(status_code=403, detail="Экспорт логов недоступен для локальных администраторов")
         csv_path = Path("logs/requests_log.csv")
         if csv_path.exists():
             return Response(
@@ -335,27 +499,34 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     # ─── Документы ────────────────────────────────────────────────────────
 
     @app.get("/api/documents")
-    async def get_documents(request: Request):
-        require_auth(request)
+    async def get_documents(user: Dict = Depends(require_permission("view_documents"))):
         from src.core.constants import COMPANIES
         data_path = Path(_config.data_path)
         docs = []
-        # Общие документы
-        common_path = data_path / "common"
-        if common_path.exists():
-            for f in sorted(common_path.rglob("*")):
-                if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                    docs.append({
-                        "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                        "name": f.name,
-                        "title": _extract_doc_title(f),
-                        "company": None,
-                        "company_name": "Все предприятия",
-                        "size": f.stat().st_size,
-                        "modified": f.stat().st_mtime,
-                    })
-        # По предприятиям
-        for company_id in COMPANIES:
+        
+        # Определяем, какие папки сканировать
+        user_company = user.get("company_id")
+        is_restricted = user["role"] != "superadmin" and user_company and user_company != "all"
+        
+        # Общие документы (сканируем только если не ограничены)
+        if not is_restricted:
+            common_path = data_path / "common"
+            if common_path.exists():
+                for f in sorted(common_path.rglob("*")):
+                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                        docs.append({
+                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
+                            "name": f.name,
+                            "title": _extract_doc_title(f),
+                            "company": None,
+                            "company_name": "Все предприятия",
+                            "size": f.stat().st_size,
+                            "modified": f.stat().st_mtime,
+                        })
+                        
+        # Документы предприятий
+        companies_to_scan = [user_company] if is_restricted else list(COMPANIES.keys())
+        for company_id in companies_to_scan:
             company_path = data_path / company_id
             if company_path.exists():
                 for f in sorted(company_path.rglob("*")):
@@ -365,38 +536,47 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                             "name": f.name,
                             "title": _extract_doc_title(f),
                             "company": company_id,
-                            "company_name": COMPANIES[company_id],
+                            "company_name": COMPANIES.get(company_id, company_id),
                             "size": f.stat().st_size,
                             "modified": f.stat().st_mtime,
                         })
-        # Остальные папки (01_company и т.д.)
-        for item in sorted(data_path.iterdir()):
-            if item.is_dir() and item.name not in {*COMPANIES, "common", ".chunks_cache"}:
-                for f in sorted(item.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": None,
-                            "company_name": f"Общие / {item.name}",
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
+                        
+        # Остальные папки (сканируем только если не ограничены)
+        if not is_restricted:
+            for item in sorted(data_path.iterdir()):
+                if item.is_dir() and item.name not in {*COMPANIES, "common", ".chunks_cache"}:
+                    for f in sorted(item.rglob("*")):
+                        if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                            docs.append({
+                                "path": str(f.relative_to(data_path)).replace("\\", "/"),
+                                "name": f.name,
+                                "title": _extract_doc_title(f),
+                                "company": None,
+                                "company_name": f"Общие / {item.name}",
+                                "size": f.stat().st_size,
+                                "modified": f.stat().st_mtime,
+                            })
         return {"documents": docs, "total": len(docs)}
 
     @app.post("/api/documents/preview")
     async def preview_document(
-        request: Request,
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
         company_id: Optional[str] = Form(None),
         doc_title: Optional[str] = Form(None),
+        user: Dict = Depends(require_auth),
     ):
         """ИИ обрабатывает загруженный документ и возвращает MD-предпросмотр."""
-        require_auth(request)
+        if user["role"] != "superadmin":
+            if "add_documents" not in user["permissions"] and "edit_documents" not in user["permissions"]:
+                raise HTTPException(status_code=403, detail="Forbidden")
+        
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            if company_id != user["company_id"]:
+                raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
         raw_text = ""
         original_filename = ""
+        pdf_bytes = None
 
         if file and file.filename:
             original_filename = file.filename
@@ -405,6 +585,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             if ext in {".txt", ".md"}:
                 raw_text = content.decode("utf-8", errors="ignore")
             elif ext == ".pdf":
+                pdf_bytes = content
                 raw_text = _extract_pdf_text(content)
             elif ext == ".docx":
                 raw_text = _extract_docx_text(content)
@@ -416,11 +597,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         else:
             return JSONResponse({"error": "Нет содержимого"}, status_code=400)
 
-        if not raw_text.strip():
+        # Разрешаем пустой raw_text, только если у нас есть PDF-байты для отправки напрямую в ИИ
+        if not raw_text.strip() and not pdf_bytes:
             return JSONResponse({"error": "Документ пустой"}, status_code=400)
 
         # ИИ конвертирует в Markdown формат
-        md_content = await _ai_convert_to_markdown(raw_text, doc_title or original_filename, company_id)
+        md_content = await _ai_convert_to_markdown(raw_text, doc_title or original_filename, company_id, pdf_bytes=pdf_bytes)
 
         # Предлагаем имя файла
         safe_name = _safe_filename(doc_title or Path(original_filename).stem)
@@ -434,13 +616,16 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         }
 
     @app.post("/api/documents/save")
-    async def save_document(request: Request):
+    async def save_document(request: Request, user: Dict = Depends(require_auth)):
         """Сохранить документ и переиндексировать его в Qdrant."""
-        require_auth(request)
         body = await request.json()
         content = body.get("content", "")
         filename = body.get("filename", "document.md")
         company_id = body.get("company_id")  # None = общий
+
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            if company_id != user["company_id"]:
+                raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
         if not content.strip():
             return JSONResponse({"error": "Содержимое пустое"}, status_code=400)
@@ -480,8 +665,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         company_id: Optional[str] = None
 
     @app.post("/api/documents/move")
-    async def move_document(body: MoveDocumentRequest, request: Request):
-        require_auth(request)
+    async def move_document(body: MoveDocumentRequest, user: Dict = Depends(require_permission("edit_documents"))):
         if not body.path:
             return JSONResponse({"error": "Путь не указан"}, status_code=400)
 
@@ -494,6 +678,18 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
         if not source_path.exists():
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
+
+        # Проверка прав по организации для ограниченных администраторов
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            try:
+                rel = source_path.relative_to(data_path)
+                if not rel.parts or rel.parts[0] != user["company_id"]:
+                    raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+            except ValueError:
+                raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+
+            if body.company_id != user["company_id"]:
+                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в другую организацию")
 
         # Вычисляем относительный путь источника
         old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
@@ -548,8 +744,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": f"Не удалось перенести файл: {str(e)}"}, status_code=500)
 
     @app.delete("/api/documents")
-    async def delete_document(request: Request):
-        require_auth(request)
+    async def delete_document(request: Request, user: Dict = Depends(require_permission("delete_documents"))):
         body = await request.json()
         doc_path = body.get("path", "")
         if not doc_path:
@@ -560,6 +755,11 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Проверка что путь внутри data/
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            parts = Path(doc_path).parts
+            if not parts or parts[0] != user["company_id"]:
+                raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
 
         if not full_path.exists():
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
@@ -575,8 +775,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         return {"success": True, "message": "Документ удалён с диска. Для очистки векторной базы примените изменения."}
 
     @app.get("/api/documents/content")
-    async def get_document_content(request: Request, path: str):
-        require_auth(request)
+    async def get_document_content(path: str, user: Dict = Depends(require_permission("view_documents"))):
         if not path:
             return JSONResponse({"error": "Путь не указан"}, status_code=400)
 
@@ -585,6 +784,11 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Проверка что путь внутри data/
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            parts = Path(path).parts
+            if not parts or parts[0] != user["company_id"]:
+                raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
 
         if not full_path.exists():
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
@@ -596,28 +800,86 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": f"Ошибка чтения файла: {str(e)}"}, status_code=500)
 
     @app.get("/api/documents/pending")
-    async def get_pending_changes(request: Request):
-        require_auth(request)
+    async def get_pending_changes(user: Dict = Depends(require_auth)):
         has_changes = len(_pending_changes["to_index"]) > 0 or len(_pending_changes["to_delete"]) > 0
+        to_index = list(_pending_changes["to_index"])
+        to_delete = list(_pending_changes["to_delete"])
+        
+        data_path = Path(_config.data_path)
+        
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            filtered_index = []
+            for path in to_index:
+                try:
+                    rel = Path(path).relative_to(data_path)
+                    if rel.parts and rel.parts[0] == user["company_id"]:
+                        filtered_index.append(path)
+                except ValueError:
+                    pass
+            to_index = filtered_index
+            
+            filtered_delete = []
+            for path in to_delete:
+                rel = Path(path)
+                if rel.parts and rel.parts[0] == user["company_id"]:
+                    filtered_delete.append(path)
+            to_delete = filtered_delete
+            
+            has_changes = len(to_index) > 0 or len(to_delete) > 0
+
+        # Превращаем пути to_index из абсолютных в относительные для вывода в интерфейсе
+        rel_to_index = []
+        for path in to_index:
+            try:
+                rel = Path(path).relative_to(data_path)
+                rel_to_index.append(str(rel).replace("\\", "/"))
+            except ValueError:
+                rel_to_index.append(path)
+        to_index = rel_to_index
+            
         return {
             "has_changes": has_changes,
-            "to_index": list(_pending_changes["to_index"]),
-            "to_delete": list(_pending_changes["to_delete"])
+            "to_index": to_index,
+            "to_delete": to_delete
         }
 
     @app.post("/api/documents/apply")
-    async def apply_documents_changes(request: Request):
-        require_auth(request)
-        if not _pending_changes["to_index"] and not _pending_changes["to_delete"]:
+    async def apply_documents_changes(user: Dict = Depends(require_permission("apply_changes"))):
+        # Находим изменения, относящиеся к компании пользователя
+        to_index = []
+        to_delete = []
+        
+        data_path = Path(_config.data_path)
+        
+        if user["role"] == "superadmin" or not user["company_id"] or user["company_id"] == "all":
+            # Суперадмин применяет всё
+            to_index = list(_pending_changes["to_index"])
+            to_delete = list(_pending_changes["to_delete"])
+            _pending_changes["to_index"].clear()
+            _pending_changes["to_delete"].clear()
+        else:
+            # Ограниченный админ применяет только свои
+            company_id = user["company_id"]
+            
+            # Фильтруем to_index (абсолютные пути)
+            for path in list(_pending_changes["to_index"]):
+                try:
+                    rel = Path(path).relative_to(data_path)
+                    if rel.parts and rel.parts[0] == company_id:
+                        to_index.append(path)
+                        _pending_changes["to_index"].remove(path)
+                except ValueError:
+                    pass
+            
+            # Фильтруем to_delete (относительные пути)
+            for path in list(_pending_changes["to_delete"]):
+                rel = Path(path)
+                if rel.parts and rel.parts[0] == company_id:
+                    to_delete.append(path)
+                    _pending_changes["to_delete"].remove(path)
+                    
+        if not to_index and not to_delete:
             return {"success": True, "message": "Нет изменений для применения."}
-
-        # Копируем списки для фоновой задачи
-        to_index = list(_pending_changes["to_index"])
-        to_delete = list(_pending_changes["to_delete"])
-
-        # Очищаем глобальные списки
-        _pending_changes["to_index"].clear()
-        _pending_changes["to_delete"].clear()
 
         # Запускаем фоновую задачу для переиндексации
         async def run_apply():
@@ -655,8 +917,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         active_days: Optional[int] = None  # None = все когда-либо писавшие
 
     @app.post("/api/broadcast")
-    async def broadcast(body: BroadcastRequest, request: Request):
-        require_auth(request)
+    async def broadcast(body: BroadcastRequest, user: Dict = Depends(require_permission("send_broadcast"))):
         if not _assistant or not _assistant.chat_history:
             return JSONResponse({"error": "БД недоступна"}, status_code=503)
 
@@ -668,8 +929,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             users = [u for u in users if u.get("last_activity") and u["last_activity"] > cutoff]
 
         # Фильтрация по компании
-        if body.company_id:
-            users = [u for u in users if u.get("company_id") == body.company_id]
+        target_company = body.company_id
+        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+            target_company = user["company_id"]
+
+        if target_company:
+            users = [u for u in users if u.get("company_id") == target_company]
 
         # Исключаем заблокированных
         users = [u for u in users if not u.get("is_blocked")]
@@ -730,7 +995,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                     }
                     async with httpx.AsyncClient() as client:
                         resp = await client.post(
-                            f"https://platform-api.max.ru/messages?chat_id={clean_chat_id}",
+                            f"https://platform-api.max.ru/messages?user_id={clean_chat_id}",
                             headers=headers,
                             json={"text": body.text, "format": "html"}
                         )
@@ -756,8 +1021,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     # ─── API ключи ────────────────────────────────────────────────────────
 
     @app.get("/api/keys")
-    async def get_api_keys(request: Request):
-        require_auth(request)
+    async def get_api_keys(user: Dict = Depends(require_permission("manage_api_keys"))):
         keys_info = []
         for i, key in enumerate(_config.api_keys):
             masked = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "****"
@@ -854,7 +1118,7 @@ def _extract_docx_text(content: bytes) -> str:
         return ""
 
 
-async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optional[str]) -> str:
+async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optional[str], pdf_bytes: Optional[bytes] = None) -> str:
     """Использовать ИИ для конвертации документа в Markdown формат."""
     if not _assistant:
         # Простой fallback без ИИ
@@ -863,7 +1127,32 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
     from src.core.constants import COMPANIES
     company_name = COMPANIES.get(company_id, "Все предприятия") if company_id else "Все предприятия"
 
-    prompt = f"""Ты помощник по оформлению корпоративных документов.
+    contents = []
+
+    if pdf_bytes:
+        from google.genai import types
+        pdf_part = types.Part.from_bytes(
+            data=pdf_bytes,
+            mime_type="application/pdf",
+        )
+        contents.append(pdf_part)
+        
+        prompt = f"""Ты помощник по оформлению корпоративных документов.
+Преобразуй прикрепленный PDF документ в структурированный Markdown-документ.
+
+Требования:
+- Добавь YAML frontmatter в начале: title, category (тип документа), company_id: "{company_id or 'common'}"
+- Используй заголовки (##, ###) для структурирования
+- Списки оформляй через - или нумерованно
+- Выдели важные данные (даты, числа, имена) **жирным**
+- Сохрани ВСЮ исходную информацию без потерь
+- Не добавляй информацию, которой нет в исходнике
+- Документ для предприятия: {company_name}
+
+Верни ТОЛЬКО готовый Markdown, без пояснений."""
+        contents.append(prompt)
+    else:
+        prompt = f"""Ты помощник по оформлению корпоративных документов.
 Преобразуй следующий текст в структурированный Markdown-документ.
 
 Требования:
@@ -879,6 +1168,7 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
 {raw_text[:8000]}
 
 Верни ТОЛЬКО готовый Markdown, без пояснений."""
+        contents.append(prompt)
 
     try:
         from src.core.clients import ClientManager
@@ -886,7 +1176,7 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
         model_client = client_manager.get_gemini_client()
         response = model_client.models.generate_content(
             model=_config.text_model,
-            contents=prompt,
+            contents=contents,
         )
         return response.text
     except Exception as e:

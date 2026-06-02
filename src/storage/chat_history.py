@@ -341,34 +341,118 @@ class ChatHistoryManager:
                     await conn.execute("DELETE FROM chat_summaries WHERE session_id = $1", session_id)
         logger.info(f"History cleared for session {session_id}")
 
-    def truncate_history_by_tokens(
-        self, messages: List[Dict], max_tokens: int, chars_per_token: float = 4.0
-    ) -> List[Dict]:
-        max_chars = int(max_tokens * chars_per_token)
-        total_chars = 0
-        result = []
-
-        for msg in reversed(messages):
-            msg_chars = len(msg["content"])
-            if total_chars + msg_chars > max_chars and result:
-                break
-            result.insert(0, msg)
-            total_chars += msg_chars
-
-        return result
-
     # ─── Методы для панели администратора ───────────────────────────────────
 
     async def _ensure_admin_schema(self):
-        """Создание дополнительных колонок для функций администратора."""
+        """Создание дополнительных колонок и таблиц для функций администратора."""
         pool = await self.get_pool()
         async with pool.acquire() as conn:
+            # 1. Дополнительные колонки в users
             await conn.execute("""
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity DOUBLE PRECISION;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS platform TEXT;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_seen DOUBLE PRECISION;
             """)
+            
+            # 2. Таблица admin_users
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS admin_users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    company_id TEXT,
+                    permissions TEXT NOT NULL DEFAULT '[]'
+                );
+            """)
+
+            # 3. Инициализация суперадмина по умолчанию
+            admin_exists = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM admin_users WHERE username = 'admin')")
+            if not admin_exists:
+                default_password = self.config.admin_password
+                pwd_hash = hash_password(default_password)
+                all_permissions = json.dumps([
+                    "view_stats", "view_logs", "manage_bot_users", "view_documents", 
+                    "add_documents", "edit_documents", "delete_documents", 
+                    "apply_changes", "send_broadcast", "manage_api_keys"
+                ])
+                await conn.execute("""
+                    INSERT INTO admin_users (username, password_hash, role, company_id, permissions)
+                    VALUES ($1, $2, $3, $4, $5)
+                """, 'admin', pwd_hash, 'superadmin', 'all', all_permissions)
+                logger.info("Default superadmin 'admin' created in database.")
+
+    async def get_admin_user_by_username(self, username: str) -> Optional[Dict]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, username, password_hash, role, company_id, permissions
+                FROM admin_users
+                WHERE username = $1
+            """, username)
+            if row:
+                return {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "password_hash": row["password_hash"],
+                    "role": row["role"],
+                    "company_id": row["company_id"],
+                    "permissions": json.loads(row["permissions"]),
+                }
+            return None
+
+    async def get_all_admin_users(self) -> List[Dict]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id, username, role, company_id, permissions
+                FROM admin_users
+                ORDER BY username ASC
+            """)
+        result = []
+        for row in rows:
+            result.append({
+                "id": row["id"],
+                "username": row["username"],
+                "role": row["role"],
+                "company_id": row["company_id"],
+                "permissions": json.loads(row["permissions"]),
+            })
+        return result
+
+    async def create_admin_user(self, username: str, password_hash: str, role: str, company_id: Optional[str], permissions: List[str]) -> int:
+        pool = await self.get_pool()
+        permissions_str = json.dumps(permissions)
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("""
+                INSERT INTO admin_users (username, password_hash, role, company_id, permissions)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id
+            """, username, password_hash, role, company_id, permissions_str)
+            return val
+
+    async def update_admin_user(self, user_id: int, username: str, password_hash: Optional[str], role: str, company_id: Optional[str], permissions: List[str]):
+        pool = await self.get_pool()
+        permissions_str = json.dumps(permissions)
+        async with pool.acquire() as conn:
+            if password_hash:
+                await conn.execute("""
+                    UPDATE admin_users
+                    SET username = $2, password_hash = $3, role = $4, company_id = $5, permissions = $6
+                    WHERE id = $1
+                """, user_id, username, password_hash, role, company_id, permissions_str)
+            else:
+                await conn.execute("""
+                    UPDATE admin_users
+                    SET username = $2, role = $3, company_id = $4, permissions = $5
+                    WHERE id = $1
+                """, user_id, username, role, company_id, permissions_str)
+
+    async def delete_admin_user(self, user_id: int):
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM admin_users WHERE id = $1", user_id)
 
     async def update_last_activity(self, user_id: str, platform: str):
         """Обновить время последней активности пользователя."""
@@ -385,23 +469,41 @@ class ChatHistoryManager:
                     first_seen = COALESCE(users.first_seen, EXCLUDED.first_seen)
             """, str(user_id), now, platform)
 
-    async def get_all_users(self, limit: int = 500, offset: int = 0) -> List[Dict]:
+    async def get_all_users(self, limit: int = 500, offset: int = 0, company_id: Optional[str] = None) -> List[Dict]:
         """Список всех пользователей для панели администратора."""
         pool = await self.get_pool()
+        if company_id == 'all':
+            company_id = None
         async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT
-                    user_id,
-                    company_id,
-                    voice_mode,
-                    COALESCE(is_blocked, FALSE) as is_blocked,
-                    last_activity,
-                    platform,
-                    first_seen
-                FROM users
-                ORDER BY COALESCE(last_activity, 0) DESC
-                LIMIT $1 OFFSET $2
-            """, limit, offset)
+            if company_id:
+                rows = await conn.fetch("""
+                    SELECT
+                        user_id,
+                        company_id,
+                        voice_mode,
+                        COALESCE(is_blocked, FALSE) as is_blocked,
+                        last_activity,
+                        platform,
+                        first_seen
+                    FROM users
+                    WHERE company_id = $3
+                    ORDER BY COALESCE(last_activity, 0) DESC
+                    LIMIT $1 OFFSET $2
+                """, limit, offset, company_id)
+            else:
+                rows = await conn.fetch("""
+                    SELECT
+                        user_id,
+                        company_id,
+                        voice_mode,
+                        COALESCE(is_blocked, FALSE) as is_blocked,
+                        last_activity,
+                        platform,
+                        first_seen
+                    FROM users
+                    ORDER BY COALESCE(last_activity, 0) DESC
+                    LIMIT $1 OFFSET $2
+                """, limit, offset)
         result = []
         for row in rows:
             result.append({
@@ -415,10 +517,14 @@ class ChatHistoryManager:
             })
         return result
 
-    async def get_users_count(self) -> int:
+    async def get_users_count(self, company_id: Optional[str] = None) -> int:
         """Общее количество пользователей."""
         pool = await self.get_pool()
+        if company_id == 'all':
+            company_id = None
         async with pool.acquire() as conn:
+            if company_id:
+                return await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = $1", company_id) or 0
             return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
 
     async def block_user(self, user_id: str):
@@ -451,49 +557,100 @@ class ChatHistoryManager:
             )
         return bool(val) if val is not None else False
 
-    async def get_stats(self) -> Dict:
-        """Статистика для дашборда."""
+    async def get_stats(self, company_id: Optional[str] = None) -> Dict:
+        """Статистика для дашборда с опциональной фильтрацией по компании."""
         pool = await self.get_pool()
         now = time.time()
         day_ago = now - 86400
         week_ago = now - 86400 * 7
 
+        if company_id == 'all':
+            company_id = None
+
         async with pool.acquire() as conn:
-            total_messages = await conn.fetchval("SELECT COUNT(*) FROM chat_messages") or 0
-            today_messages = await conn.fetchval(
-                "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", day_ago
-            ) or 0
-            week_messages = await conn.fetchval(
-                "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", week_ago
-            ) or 0
-            total_users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
-            active_today = await conn.fetchval(
-                "SELECT COUNT(DISTINCT session_id) FROM chat_messages WHERE timestamp > $1",
-                day_ago
-            ) or 0
+            if company_id:
+                total_messages = await conn.fetchval("""
+                    SELECT COUNT(*) FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE u.company_id = $1
+                """, company_id) or 0
+                
+                today_messages = await conn.fetchval("""
+                    SELECT COUNT(*) FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE m.timestamp > $1 AND u.company_id = $2
+                """, day_ago, company_id) or 0
+                
+                week_messages = await conn.fetchval("""
+                    SELECT COUNT(*) FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE m.timestamp > $1 AND u.company_id = $2
+                """, week_ago, company_id) or 0
+                
+                total_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = $1", company_id) or 0
+                
+                active_today = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT m.session_id) FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE m.timestamp > $1 AND u.company_id = $2
+                """, day_ago, company_id) or 0
 
-            # Активность по часам за последние 24 ч
-            hourly_rows = await conn.fetch("""
-                SELECT
-                    EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC'
-                        - INTERVAL '1 second' * (EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC')::bigint % 3600)) AS hour_ts,
-                    COUNT(*) as cnt
-                FROM chat_messages
-                WHERE timestamp > $1
-                GROUP BY hour_ts
-                ORDER BY hour_ts
-            """, day_ago)
+                hourly_rows = await conn.fetch("""
+                    SELECT
+                        EXTRACT(EPOCH FROM to_timestamp(m.timestamp) AT TIME ZONE 'UTC'
+                            - INTERVAL '1 second' * (EXTRACT(EPOCH FROM to_timestamp(m.timestamp) AT TIME ZONE 'UTC')::bigint % 3600)) AS hour_ts,
+                        COUNT(*) as cnt
+                    FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE m.timestamp > $1 AND u.company_id = $2
+                    GROUP BY hour_ts
+                    ORDER BY hour_ts
+                """, day_ago, company_id)
 
-            # Активность по дням за 7 дней
-            daily_rows = await conn.fetch("""
-                SELECT
-                    DATE(to_timestamp(timestamp)) as day,
-                    COUNT(*) as cnt
-                FROM chat_messages
-                WHERE timestamp > $1
-                GROUP BY day
-                ORDER BY day
-            """, week_ago)
+                daily_rows = await conn.fetch("""
+                    SELECT
+                        DATE(to_timestamp(m.timestamp)) as day,
+                        COUNT(*) as cnt
+                    FROM chat_messages m
+                    LEFT JOIN users u ON m.session_id = u.user_id
+                    WHERE m.timestamp > $1 AND u.company_id = $2
+                    GROUP BY day
+                    ORDER BY day
+                """, week_ago, company_id)
+            else:
+                total_messages = await conn.fetchval("SELECT COUNT(*) FROM chat_messages") or 0
+                today_messages = await conn.fetchval(
+                    "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", day_ago
+                ) or 0
+                week_messages = await conn.fetchval(
+                    "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", week_ago
+                ) or 0
+                total_users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
+                active_today = await conn.fetchval(
+                    "SELECT COUNT(DISTINCT session_id) FROM chat_messages WHERE timestamp > $1",
+                    day_ago
+                ) or 0
+
+                hourly_rows = await conn.fetch("""
+                    SELECT
+                        EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC'
+                            - INTERVAL '1 second' * (EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC')::bigint % 3600)) AS hour_ts,
+                        COUNT(*) as cnt
+                    FROM chat_messages
+                    WHERE timestamp > $1
+                    GROUP BY hour_ts
+                    ORDER BY hour_ts
+                """, day_ago)
+
+                daily_rows = await conn.fetch("""
+                    SELECT
+                        DATE(to_timestamp(timestamp)) as day,
+                        COUNT(*) as cnt
+                    FROM chat_messages
+                    WHERE timestamp > $1
+                    GROUP BY day
+                    ORDER BY day
+                """, week_ago)
 
         return {
             "total_messages": total_messages,
@@ -514,6 +671,7 @@ class ChatHistoryManager:
         search: Optional[str] = None,
         date_from: Optional[float] = None,
         date_to: Optional[float] = None,
+        company_id: Optional[str] = None,
     ) -> List[Dict]:
         """Получение истории сообщений для лога в панели администратора."""
         pool = await self.get_pool()
@@ -540,6 +698,10 @@ class ChatHistoryManager:
         if date_to:
             conditions.append(f"timestamp <= ${idx}")
             params.append(date_to)
+            idx += 1
+        if company_id and company_id != 'all':
+            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ${idx})")
+            params.append(company_id)
             idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -572,6 +734,7 @@ class ChatHistoryManager:
         user_id: Optional[str] = None,
         platform: Optional[str] = None,
         search: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> int:
         """Общее количество сообщений для пагинации."""
         pool = await self.get_pool()
@@ -591,10 +754,36 @@ class ChatHistoryManager:
             conditions.append(f"message ILIKE ${idx}")
             params.append(f"%{search}%")
             idx += 1
+        if company_id and company_id != 'all':
+            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ${idx})")
+            params.append(company_id)
+            idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         async with pool.acquire() as conn:
             return await conn.fetchval(
                 f"SELECT COUNT(*) FROM chat_messages {where}", *params
             ) or 0
+
+
+# ─── Хелперы авторизации ───────────────────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    import hashlib
+    import os
+    salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return salt.hex() + ":" + key.hex()
+
+
+def verify_password(stored_password_hash: str, provided_password: str) -> bool:
+    import hashlib
+    try:
+        salt_hex, key_hex = stored_password_hash.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        key = bytes.fromhex(key_hex)
+        new_key = hashlib.pbkdf2_hmac('sha256', provided_password.encode('utf-8'), salt, 100000)
+        return new_key == key
+    except Exception:
+        return False
 

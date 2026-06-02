@@ -437,12 +437,33 @@ class AssistantService:
         # Удаляем блоки рассуждений <thought>...</thought>
         text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
         
+        # 1. Заменяем структурные HTML-теги, которые не поддерживает Telegram
+        # Преобразуем li в списки с маркером
+        text = re.sub(r'<li[^>]*>(.*?)</li>', r'• \1\n', text, flags=re.DOTALL | re.IGNORECASE)
+        # Удаляем контейнеры списков ul и ol
+        text = re.sub(r'</?(?:ul|ol)[^>]*>', '', text, flags=re.IGNORECASE)
+        # Абзацы p заменяем на переносы строк
+        text = re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n\n', text, flags=re.DOTALL | re.IGNORECASE)
+        # Заголовки h1-h6 преобразуем в жирный текст
+        text = re.sub(r'<h[1-6][^>]*>(.*?)</h[1-6]>', r'<b>\1</b>\n\n', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Обрабатываем простые таблицы: строки разделяем переносами, ячейки td/th - пробелами
+        text = re.sub(r'<tr[^>]*>(.*?)</tr>', r'\1\n', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<t[dh][^>]*>(.*?)</t[dh]>', r' \1 ', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'</?(?:table|thead|tbody|tfoot)[^>]*>', '', text, flags=re.IGNORECASE)
+        
+        # Удаляем контейнеры div и span
+        text = re.sub(r'</?(?:div|span)[^>]*>', '', text, flags=re.IGNORECASE)
+
+        # 2. Обрабатываем markdown
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
         # Очистка wiki-ссылок вида [[Текст|ссылка]] -> Текст
         text = re.sub(r'\[\[([^\]|]+)\|([^\]]+)\]\]', r'\1', text)
         # Очистка wiki-ссылок вида [[Текст]] -> Текст
         text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
+        
+        # Устраняем лишние (3+) подряд идущие переносы строк
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 

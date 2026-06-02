@@ -11,6 +11,25 @@ const PAGE_SIZE = 50;
 let currentLogs = [];
 let allDocuments = [];
 let currentCompanyFilter = 'all';
+let currentUser = null;
+
+const PERMISSION_NAMES = {
+  'view_stats': 'Дашборд (Статистика)',
+  'view_logs': 'Логи запросов',
+  'manage_bot_users': 'Управление пользователями',
+  'view_documents': 'Просмотр документов',
+  'add_documents': 'Добавление документов',
+  'edit_documents': 'Редактирование документов',
+  'delete_documents': 'Удаление документов',
+  'apply_changes': 'Применение изменений',
+  'send_broadcast': 'Рассылка сообщений',
+  'manage_api_keys': 'Gemini API ключи'
+};
+
+function hasPerm(p) {
+  if (!currentUser) return false;
+  return currentUser.role === 'superadmin' || (currentUser.permissions || []).includes(p);
+}
 
 // Companies dict (будет загружен с сервера или захардкожен)
 const COMPANIES = {
@@ -31,6 +50,7 @@ const COMPANIES = {
 
 async function doLogin(e) {
   e.preventDefault();
+  const user = document.getElementById('loginUsername').value;
   const pw = document.getElementById('loginPassword').value;
   const btn = document.getElementById('loginBtn');
   btn.disabled = true;
@@ -40,14 +60,17 @@ async function doLogin(e) {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pw}),
+      body: JSON.stringify({username: user, password: pw}),
     });
     if (res.ok) {
       const data = await res.json();
       authToken = data.token;
       localStorage.setItem('admin_token', authToken);
+      currentUser = data.user;
       showApp();
     } else {
+      const errData = await res.json().catch(() => ({}));
+      document.getElementById('loginError').textContent = errData.detail || 'Неверное имя пользователя или пароль';
       document.getElementById('loginError').classList.remove('hidden');
     }
   } catch(err) {
@@ -62,6 +85,7 @@ async function doLogout() {
   await fetch('/api/auth/logout', {method: 'POST'});
   localStorage.removeItem('admin_token');
   authToken = '';
+  currentUser = null;
   document.getElementById('mainApp').classList.add('hidden');
   document.getElementById('loginScreen').classList.remove('hidden');
 }
@@ -70,19 +94,138 @@ async function checkAuth() {
   if (!authToken) return false;
   try {
     const res = await apiFetch('/api/auth/check');
-    return res && res.authenticated;
+    if (res && res.authenticated) {
+      currentUser = res.user;
+      return true;
+    }
+    return false;
   } catch(e) {
     return false;
   }
 }
 
 function showApp() {
+  if (!currentUser) return;
+
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('mainApp').classList.remove('hidden');
+  
+  // 1. Управление видимостью разделов в сайдбаре
+  
+  const navItems = document.querySelectorAll('.sidebar-nav .nav-item');
+  
+  const pagePermissions = {
+    'dashboard': 'view_stats',
+    'users': 'manage_bot_users',
+    'logs': 'view_logs',
+    'documents': 'view_documents',
+    'broadcast': 'send_broadcast',
+    'keys': 'manage_api_keys'
+  };
+  
+  navItems.forEach(item => {
+    const onclickAttr = item.getAttribute('onclick') || '';
+    const match = onclickAttr.match(/showPage\('([^']+)'/);
+    if (match) {
+      const pageName = match[1];
+      const reqPerm = pagePermissions[pageName];
+      if (reqPerm && !hasPerm(reqPerm)) {
+        item.classList.add('hidden');
+      } else {
+        item.classList.remove('hidden');
+      }
+    }
+  });
+  
+  // Сайдбар "Администраторы" (только для superadmin)
+  const navAdmins = document.getElementById('navItemAdmins');
+  if (navAdmins) {
+    if (currentUser.role === 'superadmin') {
+      navAdmins.classList.remove('hidden');
+    } else {
+      navAdmins.classList.add('hidden');
+    }
+  }
+  
   // Заполняем селекты компаниями
   populateCompanySelects();
-  // Загружаем начальную страницу
-  loadDashboard();
+  
+  // Ограничения для локальных администраторов
+  const userCompany = currentUser.company_id;
+  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+  
+  if (isRestricted) {
+    const selectsToLock = ['docCompany', 'broadcastCompany'];
+    selectsToLock.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.value = userCompany;
+        el.disabled = true;
+      }
+    });
+  } else {
+    const selectsToLock = ['docCompany', 'broadcastCompany'];
+    selectsToLock.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.disabled = false;
+      }
+    });
+  }
+
+  // Скрываем кнопку добавления документов во фронтенде, если нет прав add_documents
+  const btnAddDoc = document.querySelector('#pageDocuments .page-header button[onclick="showDocUpload()"]');
+  if (btnAddDoc) {
+    if (hasPerm('add_documents')) {
+      btnAddDoc.classList.remove('hidden');
+    } else {
+      btnAddDoc.classList.add('hidden');
+    }
+  }
+
+  // Скрываем кнопку применить изменения, если нет прав apply_changes
+  const btnApply = document.getElementById('btnApplyChanges');
+  if (btnApply) {
+    if (hasPerm('apply_changes')) {
+      btnApply.classList.remove('hidden');
+    } else {
+      btnApply.classList.add('hidden');
+    }
+  }
+
+  // Загружаем первую доступную страницу (или сохраненную из localStorage при наличии прав)
+  let savedPage = localStorage.getItem('admin_current_page');
+  let targetPage = 'dashboard';
+  
+  if (savedPage) {
+    const reqPerm = pagePermissions[savedPage];
+    if (savedPage === 'admins' && currentUser.role === 'superadmin') {
+      targetPage = 'admins';
+    } else if (reqPerm && hasPerm(reqPerm)) {
+      targetPage = savedPage;
+    } else {
+      savedPage = null;
+    }
+  }
+  
+  if (!savedPage) {
+    if (hasPerm('view_stats')) targetPage = 'dashboard';
+    else if (hasPerm('manage_bot_users')) targetPage = 'users';
+    else if (hasPerm('view_logs')) targetPage = 'logs';
+    else if (hasPerm('view_documents')) targetPage = 'documents';
+    else if (hasPerm('send_broadcast')) targetPage = 'broadcast';
+    else if (hasPerm('manage_api_keys')) targetPage = 'keys';
+    else if (currentUser.role === 'superadmin') targetPage = 'admins';
+    else targetPage = '';
+  }
+  
+  if (targetPage) {
+    const activeNav = Array.from(document.querySelectorAll('.sidebar-nav .nav-item')).find(item => {
+      const onclickAttr = item.getAttribute('onclick') || '';
+      return onclickAttr.includes(`'${targetPage}'`);
+    });
+    showPage(targetPage, activeNav);
+  }
 }
 
 // ── API Helpers ───────────────────────────────────────────────────────────
@@ -138,6 +281,7 @@ function showPage(name, navEl) {
   }
   if (navEl) navEl.classList.add('active');
   currentPage = name;
+  localStorage.setItem('admin_current_page', name);
 
   // Загрузка данных
   const loaders = {
@@ -147,6 +291,7 @@ function showPage(name, navEl) {
     documents: loadDocuments,
     broadcast: () => {},
     keys: loadKeys,
+    admins: loadAdmins,
   };
   if (loaders[name]) loaders[name]();
   return false;
@@ -359,15 +504,22 @@ function renderUsersTable(users) {
 }
 
 function showUserModal(userId, currentCompany, isBlocked) {
-  const companyOptions = Object.entries(COMPANIES).map(([k,v]) =>
-    `<option value="${k}" ${k===currentCompany?'selected':''}>${v}</option>`
-  ).join('');
+  const userCompany = currentUser.company_id;
+  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+
+  let companyOptions = '';
+  if (isRestricted) {
+    companyOptions = `<option value="${userCompany}" selected>${COMPANIES[userCompany] || userCompany}</option>`;
+  } else {
+    companyOptions = `<option value="">— Не выбрано —</option>` + Object.entries(COMPANIES).map(([k,v]) =>
+      `<option value="${k}" ${k===currentCompany?'selected':''}>${v}</option>`
+    ).join('');
+  }
 
   const bodyHtml = `
     <div class="form-group">
       <label>Предприятие</label>
-      <select class="select-input" id="modalCompany">
-        <option value="">— Не выбрано —</option>
+      <select class="select-input" id="modalCompany" ${isRestricted ? 'disabled' : ''}>
         ${companyOptions}
       </select>
     </div>
@@ -540,6 +692,22 @@ function buildDocFilterTabs() {
   const container = document.getElementById('docCompanyFilterTabs');
   if (!container) return;
   
+  const userCompany = currentUser.company_id;
+  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+  
+  if (isRestricted) {
+    const companyName = COMPANIES[userCompany] || userCompany;
+    const count = allDocuments.filter(doc => doc.company === userCompany).length;
+    
+    container.innerHTML = `
+      <button class="tab active" onclick="filterDocsByCompany('${userCompany}', this)">
+        ${companyName.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})
+      </button>
+    `;
+    currentCompanyFilter = userCompany;
+    return;
+  }
+  
   const commonCount = allDocuments.filter(doc => !doc.company).length;
   
   container.innerHTML = `
@@ -586,6 +754,9 @@ function renderDocuments() {
     return;
   }
   
+  const canEdit = hasPerm('edit_documents');
+  const canDelete = hasPerm('delete_documents');
+  
   grid.innerHTML = docs.map(doc => {
     const isCommon = !doc.company;
     const size = doc.size < 1024 ? `${doc.size} B` : doc.size < 1048576 ? `${(doc.size/1024).toFixed(1)} KB` : `${(doc.size/1048576).toFixed(1)} MB`;
@@ -603,15 +774,19 @@ function renderDocuments() {
           <button class="btn btn-secondary" onclick="viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
             <span>👁</span><span>Посмотреть</span>
           </button>
+          ${canEdit ? `
           <button class="btn btn-secondary" onclick="editDocument('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Изменить">
             <span>✏️</span><span>Изменить</span>
           </button>
           <button class="btn btn-secondary" onclick="showMoveDocModal('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Перенести">
             <span>📦</span><span>Перенести</span>
           </button>
+          ` : ''}
+          ${canDelete ? `
           <button class="btn btn-danger" onclick="deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
             <span>🗑</span><span>Удалить</span>
           </button>
+          ` : ''}
         </div>
       </div>`;
   }).join('');
@@ -889,24 +1064,84 @@ async function checkPendingChanges() {
 }
 
 async function applyPendingChanges() {
-  const btn = document.getElementById('btnApplyChanges');
+  try {
+    const data = await apiFetch('/api/documents/pending');
+    if (!data || (!data.to_index.length && !data.to_delete.length)) {
+      toast('Нет изменений для применения', 'info');
+      return;
+    }
+
+    // Формируем красивый HTML для списка изменений
+    let html = '<div class="detail-view">';
+    
+    if (data.to_index.length > 0) {
+      html += `
+        <div class="detail-row">
+          <span class="detail-label" style="color:var(--success)">📝 Добавленные / измененные файлы (${data.to_index.length}):</span>
+          <div class="detail-value-box" style="max-height: 200px; font-family: monospace;">
+            ${data.to_index.map(p => `• ${escapeHtml(p)}`).join('<br>')}
+          </div>
+        </div>
+      `;
+    }
+    
+    if (data.to_delete.length > 0) {
+      html += `
+        <div class="detail-row" style="margin-top: 12px;">
+          <span class="detail-label" style="color:var(--danger)">🗑️ Удаленные файлы (${data.to_delete.length}):</span>
+          <div class="detail-value-box" style="max-height: 200px; font-family: monospace;">
+            ${data.to_delete.map(p => `• ${escapeHtml(p)}`).join('<br>')}
+          </div>
+        </div>
+      `;
+    }
+    
+    html += `
+      <p style="font-size:13px; color:var(--text-secondary); margin-top:12px;">
+        После подтверждения новые файлы будут нарезаны на фрагменты и проиндексированы в векторной базе, а удаленные — стерты из базы. Бот сразу же сможет отвечать по обновленным документам.
+      </p>
+    </div>`;
+
+    const footer = `
+      <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-success" id="btnConfirmApply" onclick="doApplyPendingChanges()">⚡ Подтвердить применение</button>
+    `;
+
+    openModal('Применение изменений в базе знаний', html, footer, false);
+  } catch(e) {
+    toast('Ошибка получения изменений: ' + e.message, 'error');
+  }
+}
+
+async function doApplyPendingChanges() {
+  const btn = document.getElementById('btnConfirmApply');
+  const mainBtn = document.getElementById('btnApplyChanges');
   if (btn) {
     btn.disabled = true;
     btn.textContent = '⏳ Применяю...';
+  }
+  if (mainBtn) {
+    mainBtn.disabled = true;
+    mainBtn.textContent = '⏳ Применяю...';
   }
 
   try {
     const data = await apiFetch('/api/documents/apply', { method: 'POST' });
     toast(data.message || 'Изменения успешно применены!', 'success');
     hasPendingChanges = false;
-    if (btn) btn.textContent = '⚡ Применить изменения';
+    closeModal();
+    if (mainBtn) mainBtn.textContent = '⚡ Применить изменения';
     await checkPendingChanges();
     await loadDocuments();
   } catch(e) {
     toast('Ошибка применения изменений: ' + e.message, 'error');
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '⚡ Применить изменения';
+      btn.textContent = '⚡ Подтвердить применение';
+    }
+    if (mainBtn) {
+      mainBtn.disabled = false;
+      mainBtn.textContent = '⚡ Применить изменения';
     }
   }
 }
@@ -1167,6 +1402,214 @@ function populateCompanySelects() {
   });
 }
 
+// ── Admins Management ─────────────────────────────────────────────────────
+
+let allAdmins = [];
+
+async function loadAdmins() {
+  const tbody = document.getElementById('adminsBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>';
+  
+  try {
+    const data = await apiFetch('/api/admin/users');
+    if (!data) return;
+    allAdmins = data.users || [];
+    renderAdminsTable(allAdmins);
+  } catch(e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+function renderAdminsTable(admins) {
+  const tbody = document.getElementById('adminsBody');
+  if (!tbody) return;
+  if (!admins.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет администраторов</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = admins.map(a => {
+    const companyName = a.company_id === 'all' ? 'Все' : (COMPANIES[a.company_id] || a.company_id || 'Общие');
+    const roleClass = a.role === 'superadmin' ? 'superadmin' : 'admin';
+    const roleLabel = a.role === 'superadmin' ? 'Суперадмин' : 'Администратор организации';
+    
+    const permsList = (a.permissions || []).map(p => {
+      return `<span class="permission-tag" title="${p}">${PERMISSION_NAMES[p] || p}</span>`;
+    }).join('');
+    
+    return `
+      <tr>
+        <td><code>${a.id}</code></td>
+        <td><b>${escapeHtml(a.username)}</b></td>
+        <td><span class="role-badge ${roleClass}">${roleLabel}</span></td>
+        <td>${escapeName(companyName)}</td>
+        <td>${permsList || '<i style="color:var(--text-muted)">нет прав</i>'}</td>
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-ghost btn-sm" onclick="showAdminModal(${a.id})">✏️ Изменить</button>
+            ${a.username !== 'admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteAdmin(${a.id}, '${escapeHtml(a.username)}')">🗑 Удалить</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function escapeName(name) {
+  if (!name) return '—';
+  return name.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '');
+}
+
+function showAdminModal(adminId = null) {
+  const admin = adminId ? allAdmins.find(a => a.id === adminId) : null;
+  const title = admin ? `Редактирование администратора: ${admin.username}` : 'Создание нового администратора';
+  
+  const roleOptions = `
+    <option value="admin" ${admin && admin.role !== 'superadmin' ? 'selected' : ''}>Администратор организации</option>
+    <option value="superadmin" ${admin && admin.role === 'superadmin' ? 'selected' : ''}>Суперадминистратор (полный доступ)</option>
+  `;
+  
+  const companyOptions = Object.entries(COMPANIES).map(([k,v]) =>
+    `<option value="${k}" ${admin && admin.company_id === k ? 'selected' : ''}>${v}</option>`
+  ).join('');
+  
+  const permsCheckboxes = Object.entries(PERMISSION_NAMES).map(([key, name]) => {
+    const checked = admin && (admin.permissions || []).includes(key) ? 'checked' : '';
+    return `
+      <label class="permission-item">
+        <input type="checkbox" name="permissions" value="${key}" ${checked}>
+        <span>${name}</span>
+      </label>
+    `;
+  }).join('');
+
+  const bodyHtml = `
+    <form id="adminForm" onsubmit="saveAdmin(event, ${adminId})">
+      <div class="form-group">
+        <label>Имя пользователя (Логин)</label>
+        <input type="text" id="adminUsername" class="text-input" value="${admin ? escapeHtml(admin.username) : ''}" required ${admin && admin.username === 'admin' ? 'readonly style="opacity:0.7"' : ''}>
+      </div>
+      <div class="form-group">
+        <label>Пароль ${admin ? '(оставьте пустым для сохранения текущего)' : ''}</label>
+        <input type="password" id="adminPassword" class="text-input" ${admin ? '' : 'required'}>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Роль</label>
+          <select id="adminRole" class="select-input" onchange="toggleAdminRoleFields()">
+            ${roleOptions}
+          </select>
+        </div>
+        <div class="form-group" id="adminCompanyGroup">
+          <label>Организация</label>
+          <select id="adminCompany" class="select-input">
+            <option value="all" ${admin && admin.company_id === 'all' ? 'selected' : ''}>Все организации</option>
+            ${companyOptions}
+          </select>
+        </div>
+      </div>
+      <div class="form-group" id="adminPermissionsGroup">
+        <label>Права доступа</label>
+        <div class="permissions-grid">
+          ${permsCheckboxes}
+        </div>
+      </div>
+    </form>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="submitAdminForm()">💾 Сохранить</button>
+  `;
+
+  openModal(title, bodyHtml, footerHtml, false);
+  toggleAdminRoleFields();
+}
+
+function toggleAdminRoleFields() {
+  const role = document.getElementById('adminRole').value;
+  const companyGroup = document.getElementById('adminCompanyGroup');
+  const permsGroup = document.getElementById('adminPermissionsGroup');
+  
+  if (role === 'superadmin') {
+    if (companyGroup) companyGroup.style.display = 'none';
+    if (permsGroup) permsGroup.style.display = 'none';
+  } else {
+    if (companyGroup) companyGroup.style.display = '';
+    if (permsGroup) permsGroup.style.display = '';
+  }
+}
+
+function submitAdminForm() {
+  const form = document.getElementById('adminForm');
+  if (form) {
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+  }
+}
+
+async function saveAdmin(e, adminId = null) {
+  e.preventDefault();
+  
+  const username = document.getElementById('adminUsername').value;
+  const password = document.getElementById('adminPassword').value;
+  const role = document.getElementById('adminRole').value;
+  
+  let company_id = 'all';
+  let permissions = [];
+  
+  if (role !== 'superadmin') {
+    company_id = document.getElementById('adminCompany').value;
+    const checkedBoxes = document.querySelectorAll('input[name="permissions"]:checked');
+    permissions = Array.from(checkedBoxes).map(cb => cb.value);
+  } else {
+    permissions = Object.keys(PERMISSION_NAMES);
+  }
+  
+  const payload = {
+    username,
+    role,
+    company_id,
+    permissions
+  };
+  
+  if (password) {
+    payload.password = password;
+  }
+
+  try {
+    if (adminId) {
+      await apiFetch(`/api/admin/users/${adminId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      toast('Данные администратора обновлены', 'success');
+    } else {
+      await apiFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      toast('Администратор успешно создан', 'success');
+    }
+    closeModal();
+    loadAdmins();
+  } catch(err) {
+    toast('Ошибка сохранения: ' + err.message, 'error');
+  }
+}
+
+async function deleteAdmin(adminId, username) {
+  if (!confirm(`Вы действительно хотите удалить администратора "${username}"?`)) return;
+  
+  try {
+    await apiFetch(`/api/admin/users/${adminId}`, {
+      method: 'DELETE'
+    });
+    toast('Администратор удален', 'success');
+    loadAdmins();
+  } catch(err) {
+    toast('Ошибка удаления: ' + err.message, 'error');
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -1175,7 +1618,6 @@ function populateCompanySelects() {
     showApp();
   }
   
-  // Защита от случайного закрытия вкладки при наличии изменений
   window.addEventListener('beforeunload', (e) => {
     if (hasPendingChanges) {
       e.preventDefault();
@@ -1184,7 +1626,6 @@ function populateCompanySelects() {
     }
   });
 
-  // Автообновление дашборда каждые 60 секунд
   setInterval(() => {
     if (currentPage === 'dashboard') loadDashboard();
   }, 60000);
