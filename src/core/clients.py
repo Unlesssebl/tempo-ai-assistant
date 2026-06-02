@@ -175,6 +175,7 @@ class ClientManager:
         self._embedder_api_key: Optional[str] = None  # API key for current _embedder
         self._gemini_http_client: Optional[httpx.Client] = None
         self._http_client: Optional[httpx.Client] = None # Добавлено для совместимости с get_http_client
+        self._sparse_embedder: Optional[object] = None
         self._init_lock = Lock()
 
         # Менеджер API ключей для fallback
@@ -435,6 +436,21 @@ class ClientManager:
 
         return self._embedder
 
+    def get_sparse_embedder(self) -> "SparseTextEmbedding":
+        """
+        Thread-safe lazy init для SparseTextEmbedding (Qdrant/bm25).
+        """
+        if self._sparse_embedder is None:
+            with self._init_lock:
+                if self._sparse_embedder is None:
+                    try:
+                        from fastembed import SparseTextEmbedding
+                    except ImportError as e:
+                        raise ConfigError("fastembed SDK не установлен") from e
+                    logger.info("--- [SPARSE EMBEDDER INIT] Creating SparseTextEmbedding(model_name='Qdrant/bm25') ---")
+                    self._sparse_embedder = SparseTextEmbedding(model_name="Qdrant/bm25")
+        return self._sparse_embedder
+
     def get_gemini_client(self, api_version: Optional[str] = None, api_key: Optional[str] = None):
         """
         Создаёт (или возвращает кешированный) Gemini Client.
@@ -566,3 +582,4 @@ class ClientManager:
             self._gemini_clients = {}
             self._gemini_live = None
             self._embedder = None
+            self._sparse_embedder = None

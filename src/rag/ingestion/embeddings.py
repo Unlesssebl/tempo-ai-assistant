@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-from fastembed import SparseTextEmbedding
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 from qdrant_client.models import Distance, PointStruct, VectorParams, SparseVectorParams, SparseIndexParams, SparseVector
 
@@ -328,9 +327,9 @@ class EmbeddingService:
         # если предыдущие "повисли" на сетевом таймауте.
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="emb_")
 
-        # Инициализация модели для генерации разреженных векторов
-        logger.info("Инициализация модели разреженных векторов Qdrant/bm25...")
-        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        # Получение модели для генерации разреженных векторов из ClientManager
+        logger.info("Получение модели разреженных векторов из ClientManager...")
+        self.sparse_model = self.client_manager.get_sparse_embedder()
 
     def _build_pool(self, config: Config, model_name: Optional[str] = None) -> KeyPool:
         """Создать пул слотов для конкретной модели через ApiKeyManager."""

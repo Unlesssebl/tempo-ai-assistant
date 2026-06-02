@@ -6,7 +6,6 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Any
 
-from fastembed import SparseTextEmbedding
 from qdrant_client import models
 
 from src.core.clients import ClientManager
@@ -24,9 +23,9 @@ class HybridSearchService:
         self.config = config
         self.client_manager = ClientManager.get_instance(config)
         
-        # Модель для разреженных векторов Qdrant/bm25
-        logger.info("[+] Инициализация SparseTextEmbedding(Qdrant/bm25)...")
-        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        # Получение модели для разреженных векторов Qdrant/bm25 из ClientManager
+        logger.info("[+] Получение SparseTextEmbedding из ClientManager...")
+        self.sparse_model = self.client_manager.get_sparse_embedder()
         
         # Scorer для начисления бизнес-бонусов
         self.scorer = BusinessLogicScorer()
