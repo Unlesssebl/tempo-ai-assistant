@@ -81,6 +81,21 @@ def _extract_doc_title(file_path: Path) -> Optional[str]:
     return None
 
 
+def _count_files_in_dir(directory: Path) -> int:
+    """Рекурсивно считает файлы с допустимыми расширениями, исключая файлы index.md."""
+    if not directory.exists() or not directory.is_dir():
+        return 0
+    count = 0
+    try:
+        for p in directory.rglob("*"):
+            if p.is_file() and p.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                if p.name != "index.md":
+                    count += 1
+    except Exception:
+        pass
+    return count
+
+
 def create_admin_app(config, assistant=None) -> FastAPI:
     """Создать FastAPI приложение для панели администратора."""
     global _config, _assistant, _admin_app
@@ -531,66 +546,161 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     # ─── Документы ────────────────────────────────────────────────────────
 
     @app.get("/api/documents")
-    async def get_documents(user: Dict = Depends(require_permission("view_documents"))):
+    async def get_documents(path: str = "", user: Dict = Depends(require_permission("view_documents"))):
         from src.core.constants import COMPANIES
         data_path = Path(_config.data_path)
-        docs = []
         
-        # Определяем, какие папки сканировать
-        user_company = user.get("company_id")
-        is_restricted = user["role"] != "superadmin" and user_company and user_company != "all"
+        CATEGORIES_NAMES = {
+            "hr": "👥 Кадры и мотивация (hr)",
+            "routine": "📋 Внутренний распорядок и регламенты (routine)",
+            "logistics": "🚚 Транспорт и логистика (logistics)",
+            "locations": "📍 Расположение и навигация цехов (locations)",
+            "it_support": "🔧 ИТ-поддержка пользователей (it_support)",
+            "infrastructure": "⚙️ Инфраструктура и ЦОД (infrastructure)",
+            "helpdesk": "🎟 Система заявок Helpdesk (helpdesk)",
+            "social": "🏖 Социальная сфера и отдых (social)",
+            "calendar": "📅 Производственный календарь (calendar)",
+            "company": "🏢 О компании и руководство (company)",
+            "general": "🔌 Корневой раздел (general)"
+        }
         
-        # Общие документы (сканируем только если не ограничены)
-        if not is_restricted:
-            common_path = data_path / "common"
-            if common_path.exists():
-                for f in sorted(common_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": None,
-                            "company_name": "Все предприятия",
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Документы предприятий
-        companies_to_scan = [user_company] if is_restricted else list(COMPANIES.keys())
-        for company_id in companies_to_scan:
-            company_path = data_path / company_id
-            if company_path.exists():
-                for f in sorted(company_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": company_id,
-                            "company_name": COMPANIES.get(company_id, company_id),
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Остальные папки (сканируем только если не ограничены)
-        if not is_restricted:
+        # Нормализуем путь
+        normalized_path = path.strip().replace("\\", "/").strip("/")
+        
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        is_restricted = not is_super
+        
+        parts = Path(normalized_path).parts if normalized_path else ()
+        
+        # Проверка прав доступа
+        if normalized_path:
+            first_segment = parts[0] if parts else ""
+            if is_restricted and first_segment not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+                
+        target_dir = (data_path / normalized_path).resolve()
+        if not target_dir.exists() or not target_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Директория не найдена")
+            
+        # Защита от выхода за пределы data_path
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            raise HTTPException(status_code=403, detail="Недопустимый путь")
+            
+        items = []
+        
+        if not normalized_path:
+            # Корневой уровень
+            allowed_dirs = set(COMPANIES.keys()) | {"common"}
+            if is_restricted:
+                allowed_dirs = {d for d in allowed_dirs if d in user_company_ids}
+                
             for item in sorted(data_path.iterdir()):
-                if item.is_dir() and item.name not in {*COMPANIES, "common", ".chunks_cache"}:
-                    for f in sorted(item.rglob("*")):
-                        if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                            docs.append({
-                                "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                                "name": f.name,
-                                "title": _extract_doc_title(f),
-                                "company": None,
-                                "company_name": f"Общие / {item.name}",
-                                "size": f.stat().st_size,
-                                "modified": f.stat().st_mtime,
-                            })
-        return {"documents": docs, "total": len(docs)}
+                if item.is_dir():
+                    if item.name in allowed_dirs:
+                        items.append({
+                            "name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "files_count": _count_files_in_dir(item)
+                        })
+                    elif is_super and item.name not in {".chunks_cache"}:
+                        items.append({
+                            "name": COMPANIES.get(item.name, f"Папка / {item.name}") if item.name != "common" else "Общие документы",
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": f"Папка / {item.name}",
+                            "files_count": _count_files_in_dir(item)
+                        })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    items.append({
+                        "name": item.name,
+                        "path": item.name,
+                        "is_dir": False,
+                        "title": _extract_doc_title(item),
+                        "company_name": "Все предприятия",
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+        else:
+            # Внутри какой-то директории
+            first_segment = parts[0] if parts else ""
+            company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment != "common" else "Общие документы"
+            
+            for item in sorted(target_dir.iterdir()):
+                rel_path = str(item.resolve().relative_to(data_path.resolve())).replace("\\", "/")
+                if item.is_dir() and item.name not in {".chunks_cache"}:
+                    items.append({
+                        "name": CATEGORIES_NAMES.get(item.name, item.name),
+                        "path": rel_path,
+                        "is_dir": True,
+                        "company_name": company_name,
+                        "files_count": _count_files_in_dir(item)
+                    })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    items.append({
+                        "name": item.name,
+                        "path": rel_path,
+                        "is_dir": False,
+                        "title": _extract_doc_title(item),
+                        "company_name": company_name,
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+                    
+        # Конструируем хлебные крошки
+        breadcrumbs = [{"name": "🌍 База знаний", "path": ""}]
+        current_accumulated = []
+        for part in parts:
+            current_accumulated.append(part)
+            part_path = "/".join(current_accumulated)
+            
+            name = part
+            if part in COMPANIES:
+                name = COMPANIES[part]
+            elif part in CATEGORIES_NAMES:
+                name = CATEGORIES_NAMES[part]
+            elif part == "common":
+                name = "Общие документы"
+                
+            breadcrumbs.append({"name": name, "path": part_path})
+            
+        return {
+            "current_path": normalized_path,
+            "breadcrumbs": breadcrumbs,
+            "items": items,
+            "total": len(items)
+        }
 
-    @app.post("/api/documents/preview")
+    class MkdirRequest(BaseModel):
+        path: str
+
+    @app.post("/api/documents/mkdir")
+    async def create_directory(body: MkdirRequest, user: Dict = Depends(require_permission("add_documents"))):
+        if not body.path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+            
+        data_path = Path(_config.data_path)
+        normalized_path = body.path.strip().replace("\\", "/").strip("/")
+        
+        parts = Path(normalized_path).parts
+        if not parts:
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=400)
+            
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        
+        first_segment = parts[0]
+        if not is_super and first_segment not in user_company_ids:
+            raise HTTPException(status_code=403, detail="Нет прав на создание папки в этом разделе")
+            
+        target_dir = (data_path / normalized_path).resolve()
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return {"success": True, "message": f"Папка создана: {normalized_path}"}
     async def preview_document(
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
@@ -608,13 +718,22 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if company_ids:
             selected_companies = [c.strip() for c in company_ids.split(",") if c.strip()]
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             # Проверяем все переданные компании
             for cid in selected_companies:
-                if cid != user["company_id"]:
+                if cid == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif cid not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
-            if company_id and company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
+            if company_id:
+                if company_id == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif company_id not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
         
         raw_text = ""
         original_filename = ""
@@ -672,24 +791,24 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         # Получаем список выбранных компаний (поддерживаем обратную совместимость)
         company_ids = body.get("company_ids")
+        target_path = body.get("path")
+        
         if company_ids is None:
             # Если не передан список, берем одиночное поле
             company_id = body.get("company_id")
-            company_ids = [company_id] if company_id is not None else ["common"]
+            company_ids = [company_id] if company_id is not None else ["shared"]
             
-        # Превращаем 'common' и None/пустую строку в None (для общих)
+        # Превращаем 'shared', 'common' и None/пустую строку в None (для общих)
         company_ids_processed = []
         for cid in company_ids:
-            if cid in ("common", "", None):
+            if cid in ("shared", "common", "", None):
                 company_ids_processed.append(None)
             else:
                 company_ids_processed.append(cid)
 
-        # Проверка прав доступа: ограниченный админ может сохранять только в свою компанию
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
-            for cid in company_ids_processed:
-                if cid != user["company_id"]:
-                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
+        # Проверка прав доступа: ограниченный админ может сохранять только в разрешенные ему компании
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
 
         if not content.strip():
             return JSONResponse({"error": "Содержимое пустое"}, status_code=400)
@@ -704,7 +823,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             match = re.match(r"^---\s*\n(.*?)\n---\s*\n", md_text, re.DOTALL)
             if not match:
                 # Если frontmatter нет, мы можем добавить его
-                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "common"}"\n---\n\n'
+                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "shared"}"\n---\n\n'
                 return fm + md_text
                 
             fm_content = match.group(1)
@@ -713,43 +832,87 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 # Заменяем значение
                 fm_content_updated = re.sub(
                     r"^company_id\s*:.*$",
-                    f'company_id: "{target_cid or "common"}"',
+                    f'company_id: "{target_cid or "shared"}"',
                     fm_content,
                     flags=re.MULTILINE
                 )
             else:
                 # Добавляем company_id
-                fm_content_updated = fm_content + f'\ncompany_id: "{target_cid or "common"}"'
+                fm_content_updated = fm_content + f'\ncompany_id: "{target_cid or "shared"}"'
                 
             return f"---\n{fm_content_updated}\n---\n" + md_text[match.end():]
 
-        for company_id in company_ids_processed:
-            if company_id:
-                target_dir = data_path / company_id
-            else:
-                target_dir = data_path / "common"
+        if target_path:
+            target_path_norm = target_path.strip().replace("\\", "/").strip("/")
+            parts = Path(target_path_norm).parts
+            first_segment = parts[0] if parts else ""
+            
+            # Проверка прав доступа к целевой папке
+            if not is_super:
+                if first_segment in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение в общие документы")
+                elif first_segment not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+                    
+            target_dir = data_path / target_path_norm
             target_dir.mkdir(parents=True, exist_ok=True)
-
+            
             # Безопасное имя файла
             safe_name = _safe_filename(Path(filename).stem)
-            target_path = target_dir / f"{safe_name}.md"
-
-            # Адаптируем YAML frontmatter под текущую компанию
-            adapted_content = adapt_frontmatter(content, company_id)
-
-            # Записываем файл
-            target_path.write_text(adapted_content, encoding="utf-8")
-            logger.info(f"Document saved: {target_path}")
-
+            file_path = target_dir / f"{safe_name}.md"
+            
+            # Адаптируем YAML frontmatter под целевую компанию
+            target_company_id = None if first_segment in ("shared", "common") else first_segment
+            adapted_content = adapt_frontmatter(content, target_company_id)
+            
+            file_path.write_text(adapted_content, encoding="utf-8")
+            logger.info(f"Document saved: {file_path}")
+            
             # Добавляем в список изменений для индексации
-            _pending_changes["to_index"].add(str(target_path))
-            # Убираем из списка удаления на случай, если файл перезаписан
-            rel_path = str(target_path.relative_to(data_path)).replace("\\", "/")
+            _pending_changes["to_index"].add(str(file_path))
+            rel_path = str(file_path.relative_to(data_path)).replace("\\", "/")
             _pending_changes["to_delete"].discard(rel_path)
             saved_paths.append(rel_path)
+            
+            # Запускаем автоматическое обновление index.md в фоне
+            asyncio.create_task(_update_index_file_with_ai(str(file_path), target_company_id))
+        else:
+            if not is_super:
+                for cid in company_ids_processed:
+                    if cid is None:
+                        if "common" not in user_company_ids and "shared" not in user_company_ids:
+                            raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+                    elif cid not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
-            # Запускаем автоматическое обновление index.md в фоне (на диске)
-            asyncio.create_task(_update_index_file_with_ai(str(target_path), company_id))
+            for company_id in company_ids_processed:
+                if company_id:
+                    target_dir = data_path / company_id
+                else:
+                    target_dir = data_path / "shared"
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+                # Безопасное имя файла
+                safe_name = _safe_filename(Path(filename).stem)
+                target_file_path = target_dir / f"{safe_name}.md"
+
+                # Адаптируем YAML frontmatter под текущую компанию
+                adapted_content = adapt_frontmatter(content, company_id)
+
+                # Записываем файл
+                target_file_path.write_text(adapted_content, encoding="utf-8")
+                logger.info(f"Document saved: {target_file_path}")
+
+                # Добавляем в список изменений для индексации
+                _pending_changes["to_index"].add(str(target_file_path))
+                # Убираем из списка удаления на случай, если файл перезаписан
+                rel_path = str(target_file_path.relative_to(data_path)).replace("\\", "/")
+                _pending_changes["to_delete"].discard(rel_path)
+                saved_paths.append(rel_path)
+
+                # Запускаем автоматическое обновление index.md в фоне (на диске)
+                asyncio.create_task(_update_index_file_with_ai(str(target_file_path), company_id))
 
         paths_str = ", ".join(saved_paths)
         return {
@@ -757,6 +920,173 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             "paths": saved_paths,
             "message": f"Документ сохранён на диск ({paths_str}). Автоматическое обновление index.md запущено. Для обновления векторной базы нажмите «Применить изменения»."
         }
+
+    # ─── Human-in-the-loop Document Upload / AI Metadata Generation ───
+
+    class MetadataRequest(BaseModel):
+        text: str
+        draft_title: str
+        organization: Optional[str] = None
+        category: Optional[str] = None
+
+    class MetadataResponse(BaseModel):
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+
+    @app.post("/api/generate_metadata", response_model=MetadataResponse)
+    async def generate_metadata(body: MetadataRequest, user: Dict = Depends(require_auth)):
+        if not _assistant or not _assistant.text_llm:
+            raise HTTPException(status_code=503, detail="ИИ-помощник недоступен")
+            
+        prompt = f"""Ты эксперт по разметке данных для RAG. Проанализируй текст корпоративного документа и его черновое название.
+Верни строго JSON объект с 5 ключами:
+1. "title": Короткое, официальное название на русском языке.
+2. "description": Краткое описание (1-2 предложения).
+3. "file_name": Переведи суть документа на английский и сформируй короткое имя файла в snake_case. Добавь расширение .md. Пример: "График отпусков" -> "vacation_schedule.md".
+4. "tags": Массив из 5-7 ключевых слов, синонимов или аббревиатур, которые относятся к теме (на русском).
+5. "questions_answered": Массив из 2-3 самых популярных вопросов сотрудников, на которые этот текст дает прямой ответ (например: "Как получить ДМС?").
+
+Черновое название: {body.draft_title}
+Текст документа:
+{body.text}"""
+
+        try:
+            # Используем структурированную генерацию
+            res = await _assistant.text_llm.generate_structured(
+                prompt=prompt,
+                response_schema=MetadataResponse,
+                temperature=0.0
+            )
+            if isinstance(res, dict):
+                return MetadataResponse(**res)
+            return res
+        except Exception as e:
+            logger.error(f"Error generating metadata: {e}")
+            raise HTTPException(status_code=500, detail=f"Ошибка генерации метаданных: {str(e)}")
+
+    class UploadRequest(BaseModel):
+        text: str
+        organization: str
+        category: str
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+        last_updated: Optional[str] = None
+
+    @app.post("/upload")
+    async def upload_document(body: UploadRequest, user: Dict = Depends(require_auth)):
+        # Проверка прав доступа
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+
+        if not is_super:
+            target_cid = None if body.organization == "shared" else body.organization
+            if target_cid is None:
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+            elif target_cid not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+
+        import re
+        import yaml
+        from datetime import datetime
+
+        # Санитизация file_name (только a-z, 0-9, _, .md)
+        stem = Path(body.file_name).stem.lower()
+        sanitized_stem = re.sub(r'[^a-z0-9_]', '', stem)
+        if not sanitized_stem:
+            sanitized_stem = "document"
+        file_name = f"{sanitized_stem}.md"
+
+        last_updated = body.last_updated
+        if not last_updated:
+            last_updated = datetime.now().strftime("%Y-%m-%d")
+        source_file = f"{body.organization}/{body.category}/{file_name}"
+
+        # Формируем YAML Front Matter в строго заданном порядке с красивым форматированием
+        ordered_keys = [
+            "organization",
+            "category",
+            "title",
+            "description",
+            "tags",
+            "questions_answered",
+            "last_updated",
+            "source_file"
+        ]
+        
+        yaml_lines = []
+        for key in ordered_keys:
+            if key == "organization":
+                val = body.organization
+            elif key == "category":
+                val = body.category
+            elif key == "title":
+                val = body.title
+            elif key == "description":
+                val = body.description
+            elif key == "tags":
+                val = body.tags
+            elif key == "questions_answered":
+                val = body.questions_answered
+            elif key == "last_updated":
+                val = last_updated
+            elif key == "source_file":
+                val = source_file
+
+            if val is None:
+                if key in ["tags", "questions_answered"]:
+                    val = []
+                else:
+                    val = ""
+
+            if key == "tags":
+                tags_str = ", ".join(f'"{t}"' for t in val)
+                yaml_lines.append(f"tags: [{tags_str}]")
+            elif key == "questions_answered":
+                yaml_lines.append("questions_answered:")
+                if not val:
+                    yaml_lines[-1] = "questions_answered: []"
+                else:
+                    for q in val:
+                        q_escaped = q.replace('"', '\\"')
+                        yaml_lines.append(f'  - "{q_escaped}"')
+            else:
+                val_escaped = str(val).replace('"', '\\"')
+                yaml_lines.append(f'{key}: "{val_escaped}"')
+
+        yaml_str = "\n".join(yaml_lines)
+        full_content = f"---\n{yaml_str}\n---\n\n{body.text.strip()}\n"
+
+        data_path = Path(_config.data_path)
+        target_dir = data_path / body.organization / body.category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / file_name
+
+        try:
+            file_path.write_text(full_content, encoding="utf-8")
+            logger.info(f"Document uploaded/saved: {file_path}")
+
+            # Добавляем в список изменений для индексации
+            _pending_changes["to_index"].add(str(file_path))
+            _pending_changes["to_delete"].discard(source_file)
+
+            # Запускаем автоматическое обновление index.md в фоне
+            asyncio.create_task(_update_index_file_with_ai(str(file_path), body.organization))
+
+            return {
+                "success": True,
+                "message": f"Документ сохранён как {source_file}. Автоматическое обновление index.md запущено. Для обновления векторной базы примените изменения."
+            }
+        except Exception as e:
+            logger.error(f"Error saving uploaded document: {e}")
+            raise HTTPException(status_code=500, detail=f"Не удалось сохранить файл: {str(e)}")
+
 
     class MoveDocumentRequest(BaseModel):
         path: str
@@ -778,25 +1108,34 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
 
         # Проверка прав по организации для ограниченных администраторов
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             try:
-                rel = source_path.relative_to(data_path)
-                if not rel.parts or rel.parts[0] != user["company_id"]:
+                rel = source_path.resolve().relative_to(data_path.resolve())
+                if not rel.parts:
+                    raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                first_part = rel.parts[0]
+                if first_part in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                elif first_part not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
             except ValueError:
                 raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
 
-            if body.company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в другую организацию")
+            target_cid = body.company_id or "shared"
+            if target_cid not in user_company_ids and target_cid != "shared":
+                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
-        old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
+        old_rel_path = str(source_path.resolve().relative_to(data_path.resolve())).replace("\\", "/")
 
         # Определяем целевую папку
         if body.company_id:
             target_dir = data_path / body.company_id
         else:
-            target_dir = data_path / "common"
+            target_dir = data_path / "shared"
 
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / source_path.name
@@ -854,9 +1193,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(doc_path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
 
         if not full_path.exists():
@@ -883,9 +1230,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
 
         if not full_path.exists():
@@ -905,13 +1260,19 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             filtered_index = []
             for path in to_index:
                 try:
-                    rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == user["company_id"]:
-                        filtered_index.append(path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            filtered_index.append(path)
+                        elif first_part in user_company_ids:
+                            filtered_index.append(path)
                 except ValueError:
                     pass
             to_index = filtered_index
@@ -919,8 +1280,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             filtered_delete = []
             for path in to_delete:
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == user["company_id"]:
-                    filtered_delete.append(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        filtered_delete.append(path)
+                    elif first_part in user_company_ids:
+                        filtered_delete.append(path)
             to_delete = filtered_delete
             
             has_changes = len(to_index) > 0 or len(to_delete) > 0
@@ -929,7 +1294,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         rel_to_index = []
         for path in to_index:
             try:
-                rel = Path(path).relative_to(data_path)
+                rel = Path(path).resolve().relative_to(data_path.resolve())
                 rel_to_index.append(str(rel).replace("\\", "/"))
             except ValueError:
                 rel_to_index.append(path)
@@ -949,7 +1314,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] == "superadmin" or not user["company_id"] or user["company_id"] == "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if is_super:
             # Суперадмин применяет всё
             to_index = list(_pending_changes["to_index"])
             to_delete = list(_pending_changes["to_delete"])
@@ -957,24 +1324,32 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             _pending_changes["to_delete"].clear()
         else:
             # Ограниченный админ применяет только свои
-            company_id = user["company_id"]
-            
             # Фильтруем to_index (абсолютные пути)
             for path in list(_pending_changes["to_index"]):
                 try:
-                    rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == company_id:
-                        to_index.append(path)
-                        _pending_changes["to_index"].remove(path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
+                        elif first_part in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
                 except ValueError:
                     pass
             
             # Фильтруем to_delete (относительные пути)
             for path in list(_pending_changes["to_delete"]):
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == company_id:
-                    to_delete.append(path)
-                    _pending_changes["to_delete"].remove(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
+                    elif first_part in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
                     
         if not to_index and not to_delete:
             return {"success": True, "message": "Нет изменений для применения."}
@@ -1272,7 +1647,8 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=contents,
         )
@@ -1391,7 +1767,8 @@ async def _update_index_file_with_ai(new_doc_path: str, company_id: Optional[str
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=prompt,
         )

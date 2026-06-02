@@ -6,7 +6,7 @@ from rapidfuzz import process, fuzz, utils
 logger = logging.getLogger(__name__)
 
 class ContactSearchTool:
-    def __init__(self, db_path: str = "data/contacts.db"):
+    def __init__(self, db_path: str = "data/shared/contacts.db"):
         self.db_path = db_path
 
     async def search(self, target_person: str, target_company: Optional[str] = None) -> str:
