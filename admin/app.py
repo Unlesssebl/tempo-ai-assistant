@@ -887,6 +887,131 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             "message": f"Документ сохранён на диск ({paths_str}). Автоматическое обновление index.md запущено. Для обновления векторной базы нажмите «Применить изменения»."
         }
 
+    # ─── Human-in-the-loop Document Upload / AI Metadata Generation ───
+
+    class MetadataRequest(BaseModel):
+        text: str
+        draft_title: str
+        organization: Optional[str] = None
+        category: Optional[str] = None
+
+    class MetadataResponse(BaseModel):
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+
+    @app.post("/api/generate_metadata", response_model=MetadataResponse)
+    async def generate_metadata(body: MetadataRequest, user: Dict = Depends(require_auth)):
+        if not _assistant or not _assistant.text_llm:
+            raise HTTPException(status_code=503, detail="ИИ-помощник недоступен")
+            
+        prompt = f"""Ты эксперт по разметке данных для RAG. Проанализируй текст корпоративного документа и его черновое название.
+Верни строго JSON объект с 5 ключами:
+1. "title": Короткое, официальное название на русском языке.
+2. "description": Краткое описание (1-2 предложения).
+3. "file_name": Переведи суть документа на английский и сформируй короткое имя файла в snake_case. Добавь расширение .md. Пример: "График отпусков" -> "vacation_schedule.md".
+4. "tags": Массив из 5-7 ключевых слов, синонимов или аббревиатур, которые относятся к теме (на русском).
+5. "questions_answered": Массив из 2-3 самых популярных вопросов сотрудников, на которые этот текст дает прямой ответ (например: "Как получить ДМС?").
+
+Черновое название: {body.draft_title}
+Текст документа:
+{body.text}"""
+
+        try:
+            # Используем структурированную генерацию
+            res = await _assistant.text_llm.generate_structured(
+                prompt=prompt,
+                response_schema=MetadataResponse,
+                temperature=0.0
+            )
+            if isinstance(res, dict):
+                return MetadataResponse(**res)
+            return res
+        except Exception as e:
+            logger.error(f"Error generating metadata: {e}")
+            raise HTTPException(status_code=500, detail=f"Ошибка генерации метаданных: {str(e)}")
+
+    class UploadRequest(BaseModel):
+        text: str
+        organization: str
+        category: str
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+
+    @app.post("/upload")
+    async def upload_document(body: UploadRequest, user: Dict = Depends(require_auth)):
+        # Проверка прав доступа
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+
+        if not is_super:
+            target_cid = None if body.organization == "shared" else body.organization
+            if target_cid is None:
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+            elif target_cid not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+
+        import re
+        import yaml
+        from datetime import datetime
+
+        # Санитизация file_name (только a-z, 0-9, _, .md)
+        stem = Path(body.file_name).stem.lower()
+        sanitized_stem = re.sub(r'[^a-z0-9_]', '', stem)
+        if not sanitized_stem:
+            sanitized_stem = "document"
+        file_name = f"{sanitized_stem}.md"
+
+        last_updated = datetime.now().strftime("%Y-%m-%d")
+        source_file = f"{body.organization}/{body.category}/{file_name}"
+
+        # Формируем YAML Front Matter
+        frontmatter = {
+            "organization": body.organization,
+            "category": body.category,
+            "title": body.title,
+            "description": body.description,
+            "tags": body.tags,
+            "questions_answered": body.questions_answered,
+            "last_updated": last_updated,
+            "source_file": source_file
+        }
+
+        # Сериализуем YAML с поддержкой юникода
+        yaml_str = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False)
+        full_content = f"---\n{yaml_str}---\n\n{body.text.strip()}\n"
+
+        data_path = Path(_config.data_path)
+        target_dir = data_path / body.organization / body.category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / file_name
+
+        try:
+            file_path.write_text(full_content, encoding="utf-8")
+            logger.info(f"Document uploaded/saved: {file_path}")
+
+            # Добавляем в список изменений для индексации
+            _pending_changes["to_index"].add(str(file_path))
+            _pending_changes["to_delete"].discard(source_file)
+
+            # Запускаем автоматическое обновление index.md в фоне
+            asyncio.create_task(_update_index_file_with_ai(str(file_path), body.organization))
+
+            return {
+                "success": True,
+                "message": f"Документ сохранён как {source_file}. Автоматическое обновление index.md запущено. Для обновления векторной базы примените изменения."
+            }
+        except Exception as e:
+            logger.error(f"Error saving uploaded document: {e}")
+            raise HTTPException(status_code=500, detail=f"Не удалось сохранить файл: {str(e)}")
+
+
     class MoveDocumentRequest(BaseModel):
         path: str
         company_id: Optional[str] = None

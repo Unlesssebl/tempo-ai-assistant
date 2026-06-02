@@ -802,72 +802,15 @@ function renderDocuments() {
 
 function showDocUpload() {
   document.getElementById('docUploadPanel').classList.remove('hidden');
-  document.getElementById('docPreviewSection').classList.add('hidden');
+  document.getElementById('docAiResultSection').classList.add('hidden');
   
-  const container = document.getElementById('docCompaniesContainer');
-  if (!container) return;
-  
-  container.innerHTML = '';
-  
-  const userCompanyIds = currentUser.company_ids || [];
-  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
-  
-  // Радиокнопка "Общие документы"
-  const commonItem = document.createElement('label');
-  commonItem.className = 'permission-item';
-  
-  const commonCheckbox = document.createElement('input');
-  commonCheckbox.type = 'radio';
-  commonCheckbox.name = 'docCompanies';
-  commonCheckbox.value = 'common';
-  
-  if (!isSuper && !userCompanyIds.includes('common')) {
-    commonCheckbox.disabled = true;
-  } else if (currentCompanyFilter === 'common') {
-    commonCheckbox.checked = true;
-  }
-  
-  const commonSpan = document.createElement('span');
-  commonSpan.textContent = '📁 Общие документы';
-  commonItem.appendChild(commonCheckbox);
-  commonItem.appendChild(commonSpan);
-  container.appendChild(commonItem);
-  
-  // Радиокнопки для остальных компаний
-  Object.entries(COMPANIES).forEach(([id, name]) => {
-    const item = document.createElement('label');
-    item.className = 'permission-item';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'radio';
-    checkbox.name = 'docCompanies';
-    checkbox.value = id;
-    
-    if (!isSuper) {
-      if (!userCompanyIds.includes(id)) {
-        checkbox.disabled = true;
-      } else if (currentCompanyFilter === id || (userCompanyIds.includes(id) && userCompanyIds.length === 1)) {
-        checkbox.checked = true;
-      }
-    } else {
-      if (currentCompanyFilter === id) {
-        checkbox.checked = true;
-      }
-    }
-    
-    const span = document.createElement('span');
-    span.textContent = name;
-    item.appendChild(checkbox);
-    item.appendChild(span);
-    container.appendChild(item);
-  });
-
-  // Если ничего не выбрано, выберем первый доступный вариант
-  const checked = container.querySelector('input[name="docCompanies"]:checked');
-  if (!checked) {
-    const firstEnabled = container.querySelector('input[name="docCompanies"]:not([disabled])');
-    if (firstEnabled) firstEnabled.checked = true;
-  }
+  // Clear inputs
+  document.getElementById('docTitleDraft').value = '';
+  document.getElementById('docTextContent').value = '';
+  document.getElementById('fileInput').value = '';
+  document.getElementById('selectedFile').classList.add('hidden');
+  document.getElementById('selectedFile').textContent = '';
+  selectedFile = null;
 }
 
 function hideDocUpload() {
@@ -904,100 +847,159 @@ function handleDrop(e) {
   }
 }
 
-async function previewDocument() {
-  const btn = document.getElementById('previewBtn');
+async function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+async function processDocThroughAI() {
+  const btn = document.getElementById('aiProcessBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Обрабатываю...';
 
   try {
-    const formData = new FormData();
-    const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
-    const companyIds = Array.from(checkboxes).map(cb => cb.value);
-    
-    if (companyIds.length === 0) {
-      toast('Выберите хотя бы одну организацию для публикации', 'error');
-      btn.disabled = false;
-      btn.textContent = '🔍 Обработать через ИИ';
-      return;
-    }
+    const draftTitle = document.getElementById('docTitleDraft').value;
+    const organization = document.getElementById('uploadOrganization').value;
+    const category = document.getElementById('uploadCategory').value;
 
-    const title = document.getElementById('docTitle').value;
-
+    let text = '';
     if (docMode === 'file' && selectedFile) {
-      formData.append('file', selectedFile);
+      text = await readFileAsText(selectedFile);
     } else if (docMode === 'text') {
-      const text = document.getElementById('docTextContent').value;
-      if (!text.trim()) { toast('Введите текст', 'error'); return; }
-      formData.append('text_content', text);
-    } else {
-      toast('Выберите файл или введите текст', 'error');
+      text = document.getElementById('docTextContent').value;
+    }
+
+    if (!text.trim()) {
+      toast('Введите текст или выберите файл', 'error');
+      btn.disabled = false;
+      btn.textContent = '🤖 Обработать через ИИ';
       return;
     }
-    
-    // Передаем список выбранных компаний
-    formData.append('company_ids', companyIds.join(','));
-    // Передаем первую компанию для генерации превью по умолчанию
-    const primaryCompany = companyIds[0] === 'common' ? '' : companyIds[0];
-    if (primaryCompany) {
-      formData.append('company_id', primaryCompany);
-    }
-    if (title) formData.append('doc_title', title);
 
-    const res = await fetch('/api/documents/preview', {
+    const payload = {
+      text: text,
+      draft_title: draftTitle,
+      organization: organization,
+      category: category
+    };
+
+    const res = await fetch('/api/generate_metadata', {
       method: 'POST',
-      credentials: 'include',
-      body: formData,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
+
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Ошибка обработки');
+      const err = await res.json().catch(() => ({error: 'Ошибка при вызове ИИ'}));
+      throw new Error(err.error || 'Ошибка при вызове ИИ');
     }
+
     const data = await res.json();
 
-    document.getElementById('docPreview').value = data.preview || '';
-    document.getElementById('docFilename').value = data.suggested_filename || 'document.md';
-    document.getElementById('docPreviewSection').classList.remove('hidden');
-    document.getElementById('saveResult').classList.add('hidden');
-    toast('ИИ обработал документ. Проверьте и отредактируйте.', 'info');
-  } catch(e) {
-    toast('Ошибка: ' + e.message, 'error');
+    // Populate AI fields
+    document.getElementById('aiTitle').value = data.title || '';
+    document.getElementById('aiDescription').value = data.description || '';
+    document.getElementById('aiFilename').value = data.file_name || '';
+    
+    if (Array.isArray(data.tags)) {
+      document.getElementById('aiTags').value = data.tags.join(', ');
+    } else {
+      document.getElementById('aiTags').value = data.tags || '';
+    }
+
+    if (Array.isArray(data.questions_answered)) {
+      document.getElementById('aiQuestions').value = data.questions_answered.join('\n');
+    } else {
+      document.getElementById('aiQuestions').value = data.questions_answered || '';
+    }
+
+    document.getElementById('docAiResultSection').classList.remove('hidden');
+    document.getElementById('docAiResultSection').scrollIntoView({ behavior: 'smooth' });
+    toast('Разметка ИИ получена. Отредактируйте при необходимости.', 'success');
+
+  } catch (e) {
+    toast('Ошибка обработки: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔍 Обработать через ИИ';
+    btn.textContent = '🤖 Обработать через ИИ';
   }
 }
 
-async function saveDocument() {
-  const content = document.getElementById('docPreview').value;
-  const filename = document.getElementById('docFilename').value;
+async function finalUploadDocument() {
+  const organization = document.getElementById('uploadOrganization').value;
+  const category = document.getElementById('uploadCategory').value;
   
-  const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
-  const company_ids = Array.from(checkboxes).map(cb => cb.value);
+  const title = document.getElementById('aiTitle').value;
+  const description = document.getElementById('aiDescription').value;
+  const file_name = document.getElementById('aiFilename').value;
+  const tagsStr = document.getElementById('aiTags').value;
+  const questionsStr = document.getElementById('aiQuestions').value;
 
-  if (company_ids.length === 0) {
-    toast('Выберите хотя бы одну организацию для публикации', 'error');
+  let text = '';
+  if (docMode === 'file' && selectedFile) {
+    text = await readFileAsText(selectedFile);
+  } else if (docMode === 'text') {
+    text = document.getElementById('docTextContent').value;
+  }
+
+  if (!text.trim()) {
+    toast('Текст документа пустой', 'error');
     return;
   }
-  if (!content.trim()) { toast('Содержимое пустое', 'error'); return; }
+
+  // Parse tags and questions
+  const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
+  const questions_answered = questionsStr.split('\n').map(q => q.trim()).filter(q => q);
+
+  const payload = {
+    text,
+    organization,
+    category,
+    title,
+    description,
+    file_name,
+    tags,
+    questions_answered
+  };
+
+  const msgEl = document.getElementById('uploadResultMsg');
+  msgEl.className = 'hint';
+  msgEl.textContent = 'Сохраняю...';
+  msgEl.classList.remove('hidden');
 
   try {
-    const data = await apiFetch('/api/documents/save', {
+    const res = await fetch('/upload', {
       method: 'POST',
-      body: JSON.stringify({content, filename, company_ids, path: currentExplorerPath}),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
-    const el = document.getElementById('saveResult');
-    el.textContent = data.message;
-    el.className = 'success';
-    el.classList.remove('hidden');
-    toast('Документ сохранён!', 'success');
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({error: 'Ошибка при сохранении'}));
+      throw new Error(err.error || 'Ошибка при сохранении');
+    }
+
+    msgEl.textContent = 'Документ успешно сохранен на диск!';
+    msgEl.className = 'hint success';
+    toast('Документ сохранен!', 'success');
+
     setTimeout(async () => {
+      hideDocUpload();
       await loadDocuments();
     }, 2000);
-  } catch(e) {
-    const el = document.getElementById('saveResult');
-    el.textContent = 'Ошибка: ' + e.message;
-    el.className = 'error';
-    el.classList.remove('hidden');
+
+  } catch (e) {
+    msgEl.textContent = 'Ошибка: ' + e.message;
+    msgEl.className = 'hint error';
+    toast('Не удалось сохранить документ: ' + e.message, 'error');
   }
 }
 
@@ -1109,22 +1111,80 @@ async function editDocument(path, companyId) {
       if (tabTextBtn) switchDocTab('text', tabTextBtn);
     }
 
-    // Заполняем поля формы
-    const checkboxes = document.querySelectorAll('input[name="docCompanies"]');
-    checkboxes.forEach(cb => {
-      const targetVal = companyId || 'common';
-      cb.checked = (cb.value === targetVal);
-    });
-    
-    const filename = path.split('/').pop();
-    document.getElementById('docTitle').value = filename.replace('.md', '');
-    document.getElementById('docTextContent').value = data.content;
+    // Разбираем путь
+    const parts = path.split('/');
+    const org = parts[0] || 'shared';
+    const cat = parts[1] || 'routine';
+    const filename = parts[parts.length - 1] || 'document.md';
 
-    // Показываем секцию превью с контентом для сохранения
-    document.getElementById('docPreview').value = data.content;
-    document.getElementById('docFilename').value = filename;
-    document.getElementById('docPreviewSection').classList.remove('hidden');
-    document.getElementById('saveResult').classList.add('hidden');
+    document.getElementById('uploadOrganization').value = org;
+    document.getElementById('uploadCategory').value = cat;
+    document.getElementById('docTitleDraft').value = filename.replace('.md', '').replace(/_/g, ' ');
+
+    let text = data.content;
+    let title = filename.replace('.md', '');
+    let description = '';
+    let tags = '';
+    let questions = '';
+    
+    const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+    if (match) {
+      const yamlStr = match[1];
+      text = text.substring(match[0].length).trim();
+      
+      const yamlLines = yamlStr.split('\n');
+      let inQuestions = false;
+      let qList = [];
+      
+      for (let line of yamlLines) {
+        line = line.trim();
+        if (!line) continue;
+        
+        if (line.startsWith('questions_answered:')) {
+          inQuestions = true;
+          const inlineMatch = line.match(/questions_answered:\s*\[(.*)\]/);
+          if (inlineMatch) {
+            qList = inlineMatch[1].split(',').map(x => x.trim().replace(/^["']|["']$/g, ''));
+            inQuestions = false;
+          }
+          continue;
+        }
+        
+        if (inQuestions) {
+          if (line.startsWith('-')) {
+            qList.push(line.substring(1).trim().replace(/^["']|["']$/g, ''));
+            continue;
+          } else if (line.includes(':')) {
+            inQuestions = false;
+          }
+        }
+        
+        if (line.startsWith('title:')) {
+          title = line.substring(6).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('description:')) {
+          description = line.substring(12).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('tags:')) {
+          const tagsMatch = line.match(/tags:\s*\[(.*)\]/);
+          if (tagsMatch) {
+            tags = tagsMatch[1].split(',').map(x => x.trim().replace(/^["']|["']$/g, '')).join(', ');
+          } else {
+            tags = line.substring(5).trim().replace(/^["']|["']$/g, '');
+          }
+        }
+      }
+      if (qList.length > 0) {
+        questions = qList.join('\n');
+      }
+    }
+
+    document.getElementById('docTextContent').value = text;
+    document.getElementById('aiTitle').value = title;
+    document.getElementById('aiDescription').value = description;
+    document.getElementById('aiFilename').value = filename;
+    document.getElementById('aiTags').value = tags;
+    document.getElementById('aiQuestions').value = questions;
+
+    document.getElementById('docAiResultSection').classList.remove('hidden');
 
     // Скроллим к форме
     document.getElementById('docUploadPanel').scrollIntoView({ behavior: 'smooth' });

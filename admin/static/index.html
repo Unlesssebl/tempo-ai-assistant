@@ -255,22 +255,51 @@
                 <!-- Upload Panel (hidden by default) -->
                 <div id="docUploadPanel" class="card glass hidden">
                     <div class="card-header">
-                        <h3>Добавить документ</h3>
+                        <h3>Добавить документ (Human-in-the-loop)</h3>
                         <button class="btn btn-ghost btn-sm" onclick="hideDocUpload()">✕</button>
                     </div>
                     <div class="upload-form">
                         <div class="form-row">
+                            <div class="form-group">
+                                <label>Организация</label>
+                                <select class="select-input" id="uploadOrganization">
+                                    <option value="shared">📁 Все предприятия (Общее)</option>
+                                    <option value="technotron">ООО "Технотрон"</option>
+                                    <option value="kmk">Камский металлургический комбинат (КМК)</option>
+                                    <option value="it_department">ИТ-Дирекция</option>
+                                    <option value="zteo">АО ПТФК "ЗТЭО"</option>
+                                    <option value="ntz">АО НТЗ "ТЭМ-ПО"</option>
+                                    <option value="kzmk">АО КЗМК "ТЭМПО"</option>
+                                    <option value="metiz">ООО Технотрон-Метиз</option>
+                                    <option value="port">ООО ТЭМПО-ПОРТ</option>
+                                    <option value="sks">АО СКС "ТЭМПО"</option>
+                                    <option value="td">АО ТД "ТЭМПО"</option>
+                                    <option value="itz">АО ИТЗ</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Категория</label>
+                                <select class="select-input" id="uploadCategory">
+                                    <option value="hr">Кадры (hr)</option>
+                                    <option value="routine">Регламенты (routine)</option>
+                                    <option value="logistics">Логистика (logistics)</option>
+                                    <option value="locations">Расположение (locations)</option>
+                                    <option value="it_support">ИТ-поддержка (it_support)</option>
+                                    <option value="infrastructure">Инфраструктура (infrastructure)</option>
+                                    <option value="helpdesk">Helpdesk (helpdesk)</option>
+                                    <option value="social">Социальная сфера (social)</option>
+                                    <option value="calendar">Календарь (calendar)</option>
+                                    <option value="company">Компания (company)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
                             <div class="form-group" style="grid-column: span 2;">
-                                <label>Название документа</label>
-                                <input type="text" class="text-input" id="docTitle" placeholder="Например: Дресс-код 2024">
+                                <label>Черновое название документа (на русском)</label>
+                                <input type="text" class="text-input" id="docTitleDraft" placeholder="Например: График отпусков завода на 2026 год">
                             </div>
                         </div>
-                        <div class="form-group">
-                            <label>Организации для публикации</label>
-                            <div id="docCompaniesContainer" class="permissions-grid">
-                                <!-- Генерируется динамически через JS -->
-                            </div>
-                        </div>
+
                         <div class="tabs">
                             <button class="tab active" onclick="switchDocTab('file', this)">📎 Загрузить файл</button>
                             <button class="tab" onclick="switchDocTab('text', this)">✏️ Ввести текст</button>
@@ -279,8 +308,8 @@
                             <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="event.preventDefault()">
                                 <div class="drop-icon">📄</div>
                                 <p>Перетащите файл сюда или <label for="fileInput" class="link">выберите</label></p>
-                                <p class="hint">Поддерживается: PDF, DOCX, TXT, MD</p>
-                                <input type="file" id="fileInput" class="hidden" accept=".pdf,.docx,.txt,.md" onchange="fileSelected()">
+                                <p class="hint">Поддерживается только: .MD, .TXT</p>
+                                <input type="file" id="fileInput" class="hidden" accept=".txt,.md" onchange="fileSelected()">
                             </div>
                             <div id="selectedFile" class="selected-file hidden"></div>
                         </div>
@@ -288,22 +317,40 @@
                             <textarea class="textarea-input" id="docTextContent" rows="8" placeholder="Вставьте или введите текст документа..."></textarea>
                         </div>
                         <div class="upload-actions">
-                            <button class="btn btn-secondary" onclick="previewDocument()" id="previewBtn">🔍 Обработать через ИИ</button>
-                            <span class="hint">ИИ конвертирует документ в нужный формат</span>
+                            <button type="button" class="btn btn-secondary" onclick="processDocThroughAI()" id="aiProcessBtn">🤖 Обработать через ИИ</button>
+                            <span class="hint">ИИ сгенерирует название, описание, теги и вопросы перед сохранением</span>
                         </div>
                     </div>
 
-                    <!-- Preview Section -->
-                    <div id="docPreviewSection" class="hidden">
-                        <div class="preview-header">
-                            <h4>Предпросмотр (можно редактировать)</h4>
-                            <div class="preview-actions">
-                                <input type="text" class="text-input" id="docFilename" placeholder="Имя файла">
-                                <button class="btn btn-primary" onclick="saveDocument()">💾 Сохранить в базу</button>
+                    <!-- AI Result Section (hidden by default) -->
+                    <div id="docAiResultSection" class="hidden" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
+                        <h4 style="margin-bottom: 15px; color: var(--accent);">🤖 Результат обработки ИИ (разметка для RAG)</h4>
+                        <div class="form-vertical">
+                            <div class="form-group">
+                                <label>Сгенерированный заголовок (Title)</label>
+                                <input type="text" class="text-input" id="aiTitle" placeholder="Официальный заголовок документа...">
+                            </div>
+                            <div class="form-group">
+                                <label>Описание для RAG (Description)</label>
+                                <input type="text" class="text-input" id="aiDescription" placeholder="Краткое описание документа...">
+                            </div>
+                            <div class="form-group">
+                                <label>Имя файла (File Name, snake_case.md)</label>
+                                <input type="text" class="text-input" id="aiFilename" placeholder="vacation_schedule.md">
+                            </div>
+                            <div class="form-group">
+                                <label>Теги (Tags, через запятую)</label>
+                                <input type="text" class="text-input" id="aiTags" placeholder="тег1, тег2, тег3...">
+                            </div>
+                            <div class="form-group">
+                                <label>Связанные вопросы (Questions, каждый вопрос с новой строки)</label>
+                                <textarea class="textarea-input" id="aiQuestions" rows="3" placeholder="Вопрос 1?&#10;Вопрос 2?"></textarea>
+                            </div>
+                            <div class="upload-actions" style="margin-top: 15px;">
+                                <button type="button" class="btn btn-primary" onclick="finalUploadDocument()">💾 Сохранить и опубликовать</button>
+                                <span id="uploadResultMsg" class="hidden"></span>
                             </div>
                         </div>
-                        <textarea class="textarea-input textarea-preview" id="docPreview" rows="20"></textarea>
-                        <div id="saveResult" class="hidden"></div>
                     </div>
                 </div>
 

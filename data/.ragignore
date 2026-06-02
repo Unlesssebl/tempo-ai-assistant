@@ -2,3 +2,5 @@
 CONVENTIONS.md
 README.md
 .ragignore
+
+*index.md
