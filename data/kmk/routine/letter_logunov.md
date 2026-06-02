@@ -1,10 +1,12 @@
 ---
-category: routine
-description: ''
-last_updated: '2026-06-02'
-organization: kmk
-source_file: kmk/routine/letter_logunov.md
-title: Запрос на закупку сетевого оборудования
+organization: "kmk"
+category: "routine"
+title: "Запрос на закупку сетевого оборудования"
+description: "Документ Запрос на закупку сетевого оборудования"
+tags: ["kmk", "routine"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "kmk/routine/letter_logunov.md"
 ---
 
 Уважаемый **Николай Викторович**!

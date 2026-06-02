@@ -1,30 +1,19 @@
 ---
-category: it_support
-description: Инструкция по решению проблем с сетью/интернетом и пошаговое руководство
-  по созданию заявок в системе HelpDesk (Intraservice).
-last_updated: '2026-01-01'
-organization: shared
+organization: "shared"
+category: "it_support"
+title: "ИТ-поддержка и инструкция HelpDesk"
+description: "Инструкция по решению проблем с сетью/интернетом и пошаговое руководство по созданию заявок в системе HelpDesk (Intraservice)."
+tags: ["контакты", "поддержка", "инструкция", "сеть", "интернет", "проблемы", "заявка", "Intraservice", "ИТ", "HelpDesk"]
 questions_answered:
-- Как проверить сетевой кабель?
-- Как отследить статус заявки?
-- Что такое HelpDesk?
-- Телефон ИТ-поддержки?
-- Как войти в HelpDesk?
-- Что делать если нет интернета?
-- Как создать заявку в ИТ-отдел?
-source_file: shared/it_support/helpdesk.md
-tags:
-- контакты
-- поддержка
-- инструкция
-- сеть
-- интернет
-- проблемы
-- заявка
-- Intraservice
-- ИТ
-- HelpDesk
-title: ИТ-поддержка и инструкция HelpDesk
+  - "Как проверить сетевой кабель?"
+  - "Как отследить статус заявки?"
+  - "Что такое HelpDesk?"
+  - "Телефон ИТ-поддержки?"
+  - "Как войти в HelpDesk?"
+  - "Что делать если нет интернета?"
+  - "Как создать заявку в ИТ-отдел?"
+last_updated: "2026-01-01"
+source_file: "shared/it_support/helpdesk.md"
 ---
 
 # Инструкция HelpDesk

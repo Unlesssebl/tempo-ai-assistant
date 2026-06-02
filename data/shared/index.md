@@ -1,5 +1,6 @@
 ---
 organization: "shared"
+category: "general"
 title: "Все предприятия (Общее)"
 description: "Навигационный индекс документов организации Все предприятия (Общее)"
 tags: ["индекс", "навигация", "shared"]

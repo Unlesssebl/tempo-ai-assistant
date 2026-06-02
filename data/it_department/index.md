@@ -1,5 +1,6 @@
 ---
 organization: "it_department"
+category: "general"
 title: "ИТ-Дирекция"
 description: "Навигационный индекс документов организации ИТ-Дирекция"
 tags: ["индекс", "навигация", "it_department"]

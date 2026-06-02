@@ -1,18 +1,14 @@
 ---
-category: locations
-description: Координаты цехов и складов на внутренней территории предприятия
-last_updated: '2026-04-20'
-organization: ntz
+organization: "ntz"
+category: "locations"
+title: "Расположение на территории АО НТЗ ТЭМПО"
+description: "Координаты цехов и складов на внутренней территории предприятия"
+tags: ["локация", "цеха", "карты", "ТЭМПО"]
 questions_answered:
-- Где находится цех №1?
-- Где расположен склад 25 000 тонн?
-source_file: ntz/locations/map.md
-tags:
-- локация
-- цеха
-- карты
-- ТЭМПО
-title: Расположение на территории АО НТЗ ТЭМПО
+  - "Где находится цех №1?"
+  - "Где расположен склад 25 000 тонн?"
+last_updated: "2026-04-20"
+source_file: "ntz/locations/map.md"
 ---
 
 ## АО «НТЗ "ТЭМПО"»

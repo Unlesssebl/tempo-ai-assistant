@@ -1,5 +1,6 @@
 ---
 organization: "technotron"
+category: "general"
 title: "ООО 'Технотрон'"
 description: "Навигационный индекс документов организации ООО 'Технотрон'"
 tags: ["индекс", "навигация", "technotron"]

@@ -1,5 +1,6 @@
 ---
 organization: "metiz"
+category: "general"
 title: "ООО Технотрон-Метиз"
 description: "Навигационный индекс документов организации ООО Технотрон-Метиз"
 tags: ["индекс", "навигация", "metiz"]

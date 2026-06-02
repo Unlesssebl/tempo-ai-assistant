@@ -1,5 +1,6 @@
 ---
 organization: "itz"
+category: "general"
 title: "АО ИТЗ"
 description: "Навигационный индекс документов организации АО ИТЗ"
 tags: ["индекс", "навигация", "itz"]

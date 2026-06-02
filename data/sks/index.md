@@ -1,5 +1,6 @@
 ---
 organization: "sks"
+category: "general"
 title: "АО СКС 'ТЭМПО'"
 description: "Навигационный индекс документов организации АО СКС 'ТЭМПО'"
 tags: ["индекс", "навигация", "sks"]

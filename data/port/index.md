@@ -1,5 +1,6 @@
 ---
 organization: "port"
+category: "general"
 title: "ООО ТЭМПО-ПОРТ"
 description: "Навигационный индекс документов организации ООО ТЭМПО-ПОРТ"
 tags: ["индекс", "навигация", "port"]

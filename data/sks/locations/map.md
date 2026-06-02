@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: sks
-source_file: sks/locations/map.md
-title: map
+organization: "sks"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["sks", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "sks/locations/map.md"
 ---
 
 ﻿---

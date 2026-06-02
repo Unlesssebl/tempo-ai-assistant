@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: zteo
-source_file: zteo/locations/map.md
-title: map
+organization: "zteo"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["zteo", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "zteo/locations/map.md"
 ---
 
 ﻿---

@@ -1,21 +1,15 @@
 ---
-category: routine
-description: Расписание обеденных перерывов для сотрудников АО «ПТФК «ТЕХНОТРОН»
-last_updated: '2026-01-01'
-organization: technotron
+organization: "technotron"
+category: "routine"
+title: "График обедов Технотрон"
+description: "Расписание обеденных перерывов для сотрудников АО «ПТФК «ТЕХНОТРОН»"
+tags: ["столовая", "обед", "график", "Технотрон", "АБК-3", "питание"]
 questions_answered:
-- Во сколько обед у рабочих?
-- Когда обед у ИТР?
-- График обеда для сменных работников?
-source_file: technotron/routine/canteen_schedule.md
-tags:
-- столовая
-- обед
-- график
-- Технотрон
-- АБК-3
-- питание
-title: График обедов Технотрон
+  - "Во сколько обед у рабочих?"
+  - "Когда обед у ИТР?"
+  - "График обеда для сменных работников?"
+last_updated: "2026-01-01"
+source_file: "technotron/routine/canteen_schedule.md"
 ---
 
 # График обедов — АО «ПТФК «ТЕХНОТРОН»

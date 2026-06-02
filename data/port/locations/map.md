@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: port
-source_file: port/locations/map.md
-title: map
+organization: "port"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["port", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "port/locations/map.md"
 ---
 
 ﻿---

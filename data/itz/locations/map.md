@@ -1,17 +1,13 @@
 ---
-category: locations
-description: Координаты цехов и складов на внутренней территории предприятия
-last_updated: '2026-04-20'
-organization: itz
+organization: "itz"
+category: "locations"
+title: "Расположение на территории АО ИТЗ"
+description: "Координаты цехов и складов на внутренней территории предприятия"
+tags: ["локация", "цеха", "карты", "ТЭМПО"]
 questions_answered:
-- Где находятся объекты на территории предприятия?
-source_file: itz/locations/map.md
-tags:
-- локация
-- цеха
-- карты
-- ТЭМПО
-title: Расположение на территории АО ИТЗ
+  - "Где находятся объекты на территории предприятия?"
+last_updated: "2026-04-20"
+source_file: "itz/locations/map.md"
 ---
 
 ## АО «ИТЗ»

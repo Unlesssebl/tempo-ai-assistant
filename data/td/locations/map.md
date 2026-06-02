@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: td
-source_file: td/locations/map.md
-title: map
+organization: "td"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["td", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "td/locations/map.md"
 ---
 
 ﻿---

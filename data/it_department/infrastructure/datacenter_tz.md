@@ -1,11 +1,12 @@
 ---
-category: infrastructure
-description: ''
-last_updated: '2026-06-02'
-organization: it_department
-source_file: it_department/infrastructure/datacenter_tz.md
-title: Техническое задание на монтаж волоконно-оптической линии связи и закупку оборудования
-  для нового здания ЦОД
+organization: "it_department"
+category: "infrastructure"
+title: "Техническое задание на монтаж волоконно-оптической линии связи и закупку оборудования для нового здания ЦОД"
+description: "Документ Техническое задание на монтаж волоконно-оптической линии связи и закупку оборудования для нового здания ЦОД"
+tags: ["it_department", "infrastructure"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "it_department/infrastructure/datacenter_tz.md"
 ---
 
 ООО «АЙТИ «ТЭМПО»

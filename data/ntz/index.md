@@ -1,5 +1,6 @@
 ---
 organization: "ntz"
+category: "general"
 title: "АО НТЗ 'ТЭМ-ПО'"
 description: "Навигационный индекс документов организации АО НТЗ 'ТЭМ-ПО'"
 tags: ["индекс", "навигация", "ntz"]

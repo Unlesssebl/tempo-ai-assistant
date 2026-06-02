@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: metiz
-source_file: metiz/locations/map.md
-title: map
+organization: "metiz"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["metiz", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "metiz/locations/map.md"
 ---
 
 ﻿---

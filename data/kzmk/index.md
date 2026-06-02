@@ -1,5 +1,6 @@
 ---
 organization: "kzmk"
+category: "general"
 title: "АО КЗМК 'ТЭМПО'"
 description: "Навигационный индекс документов организации АО КЗМК 'ТЭМПО'"
 tags: ["индекс", "навигация", "kzmk"]

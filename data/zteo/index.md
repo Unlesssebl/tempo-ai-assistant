@@ -1,5 +1,6 @@
 ---
 organization: "zteo"
+category: "general"
 title: "АО ПТФК 'ЗТЭО'"
 description: "Навигационный индекс документов организации АО ПТФК 'ЗТЭО'"
 tags: ["индекс", "навигация", "zteo"]

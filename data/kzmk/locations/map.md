@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: kzmk
-source_file: kzmk/locations/map.md
-title: map
+organization: "kzmk"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["kzmk", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "kzmk/locations/map.md"
 ---
 
 ﻿---

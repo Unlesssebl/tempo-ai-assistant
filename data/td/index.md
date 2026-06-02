@@ -1,5 +1,6 @@
 ---
 organization: "td"
+category: "general"
 title: "АО ТД 'ТЭМПО'"
 description: "Навигационный индекс документов организации АО ТД 'ТЭМПО'"
 tags: ["индекс", "навигация", "td"]

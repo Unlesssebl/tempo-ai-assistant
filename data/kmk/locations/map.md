@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: kmk
-source_file: kmk/locations/map.md
-title: map
+organization: "kmk"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["kmk", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "kmk/locations/map.md"
 ---
 
 ﻿---

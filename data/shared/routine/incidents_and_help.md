@@ -1,19 +1,12 @@
 ---
-category: routine
-description: Куда обращаться при травмах, воровстве, пожаре, конфликтах
-last_updated: '2026-04-03'
-organization: shared
-source_file: shared/routine/incidents_and_help.md
-tags:
-- инцидент
-- травма
-- воровство
-- кража
-- ЧС
-- скорая
-- помощь
-- безопасность
-title: Действия при инцидентах, травмах и ЧС
+organization: "shared"
+category: "routine"
+title: "Действия при инцидентах, травмах и ЧС"
+description: "Куда обращаться при травмах, воровстве, пожаре, конфликтах"
+tags: ["инцидент", "травма", "воровство", "кража", "ЧС", "скорая", "помощь", "безопасность"]
+questions_answered: []
+last_updated: "2026-04-03"
+source_file: "shared/routine/incidents_and_help.md"
 ---
 
 # Маршрутизация инцидентов (Куда обращаться сотруднику)

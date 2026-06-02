@@ -1,10 +1,12 @@
 ---
-category: locations
-description: ''
-last_updated: '2026-06-02'
-organization: it_department
-source_file: it_department/locations/map.md
-title: map
+organization: "it_department"
+category: "locations"
+title: "map"
+description: "Документ map"
+tags: ["it_department", "locations"]
+questions_answered: []
+last_updated: "2026-06-02"
+source_file: "it_department/locations/map.md"
 ---
 
 ﻿---
