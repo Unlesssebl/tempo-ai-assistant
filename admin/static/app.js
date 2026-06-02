@@ -691,19 +691,38 @@ function buildDocFilterTabs() {
   const container = document.getElementById('docCompanyFilterTabs');
   if (!container) return;
   
-  const userCompany = currentUser.company_id;
-  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+  const userCompanyIds = currentUser.company_ids || [];
+  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
   
-  if (isRestricted) {
-    const companyName = COMPANIES[userCompany] || userCompany;
-    const count = allDocuments.filter(doc => doc.company === userCompany).length;
+  if (!isSuper) {
+    // Ограниченный администратор - показываем вкладки только для разрешенных ему компаний
+    let html = '';
     
-    container.innerHTML = `
-      <button class="tab active" onclick="filterDocsByCompany('${userCompany}', this)">
-        ${companyName.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})
-      </button>
-    `;
-    currentCompanyFilter = userCompany;
+    // Если текущий фильтр не входит в разрешенные, выберем первую компанию из списка
+    if (!userCompanyIds.includes(currentCompanyFilter)) {
+      currentCompanyFilter = userCompanyIds[0] || 'all';
+    }
+    
+    userCompanyIds.forEach(id => {
+      let label = '';
+      let count = 0;
+      if (id === 'common') {
+        label = '📁 Общие';
+        count = allDocuments.filter(doc => !doc.company).length;
+      } else {
+        const name = COMPANIES[id] || id;
+        label = name.replace('АО ', '').replace('ООО ', '').replace(/"/g, '');
+        count = allDocuments.filter(doc => doc.company === id).length;
+      }
+      
+      html += `
+        <button class="tab ${currentCompanyFilter === id ? 'active' : ''}" onclick="filterDocsByCompany('${id}', this)">
+          ${label} (${count})
+        </button>
+      `;
+    });
+    
+    container.innerHTML = html;
     return;
   }
   
@@ -719,7 +738,7 @@ function buildDocFilterTabs() {
     
     const btn = document.createElement('button');
     btn.className = `tab ${currentCompanyFilter === id ? 'active' : ''}`;
-    btn.textContent = `${name.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})`;
+    btn.textContent = `${name.replace('АО ', '').replace('ООО ', '').replace(/"/g, '')} (${count})`;
     btn.onclick = (e) => filterDocsByCompany(id, btn);
     container.appendChild(btn);
   });
@@ -800,19 +819,19 @@ function showDocUpload() {
   
   container.innerHTML = '';
   
-  const userCompany = currentUser.company_id;
-  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+  const userCompanyIds = currentUser.company_ids || [];
+  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
   
-  // Чекбокс "Общие документы"
+  // Радиокнопка "Общие документы"
   const commonItem = document.createElement('label');
   commonItem.className = 'permission-item';
   
   const commonCheckbox = document.createElement('input');
-  commonCheckbox.type = 'checkbox';
+  commonCheckbox.type = 'radio';
   commonCheckbox.name = 'docCompanies';
   commonCheckbox.value = 'common';
   
-  if (isRestricted) {
+  if (!isSuper && !userCompanyIds.includes('common')) {
     commonCheckbox.disabled = true;
   } else if (currentCompanyFilter === 'common') {
     commonCheckbox.checked = true;
@@ -824,21 +843,22 @@ function showDocUpload() {
   commonItem.appendChild(commonSpan);
   container.appendChild(commonItem);
   
-  // Чекбоксы для остальных компаний
+  // Радиокнопки для остальных компаний
   Object.entries(COMPANIES).forEach(([id, name]) => {
     const item = document.createElement('label');
     item.className = 'permission-item';
     
     const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
+    checkbox.type = 'radio';
     checkbox.name = 'docCompanies';
     checkbox.value = id;
     
-    if (isRestricted) {
-      if (id === userCompany) {
+    if (!isSuper) {
+      if (!userCompanyIds.includes(id)) {
+        checkbox.disabled = true;
+      } else if (currentCompanyFilter === id || (userCompanyIds.includes(id) && userCompanyIds.length === 1)) {
         checkbox.checked = true;
       }
-      checkbox.disabled = true;
     } else {
       if (currentCompanyFilter === id) {
         checkbox.checked = true;
@@ -851,6 +871,13 @@ function showDocUpload() {
     item.appendChild(span);
     container.appendChild(item);
   });
+
+  // Если ничего не выбрано, выберем первый доступный вариант
+  const checked = container.querySelector('input[name="docCompanies"]:checked');
+  if (!checked) {
+    const firstEnabled = container.querySelector('input[name="docCompanies"]:not([disabled])');
+    if (firstEnabled) firstEnabled.checked = true;
+  }
 }
 
 function hideDocUpload() {

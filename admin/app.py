@@ -537,11 +537,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         docs = []
         
         # Определяем, какие папки сканировать
-        user_company = user.get("company_id")
-        is_restricted = user["role"] != "superadmin" and user_company and user_company != "all"
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        is_restricted = not is_super
         
-        # Общие документы (сканируем только если не ограничены)
-        if not is_restricted:
+        # Общие документы (сканируем только если не ограничены ИЛИ есть доступ к common)
+        if not is_restricted or "common" in user_company_ids:
             common_path = data_path / "common"
             if common_path.exists():
                 for f in sorted(common_path.rglob("*")):
@@ -557,7 +558,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         })
                         
         # Документы предприятий
-        companies_to_scan = [user_company] if is_restricted else list(COMPANIES.keys())
+        companies_to_scan = [c for c in user_company_ids if c in COMPANIES] if is_restricted else list(COMPANIES.keys())
         for company_id in companies_to_scan:
             company_path = data_path / company_id
             if company_path.exists():
@@ -608,13 +609,22 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if company_ids:
             selected_companies = [c.strip() for c in company_ids.split(",") if c.strip()]
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             # Проверяем все переданные компании
             for cid in selected_companies:
-                if cid != user["company_id"]:
+                if cid == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif cid not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
-            if company_id and company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
+            if company_id:
+                if company_id == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif company_id not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
         
         raw_text = ""
         original_filename = ""
@@ -685,10 +695,15 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             else:
                 company_ids_processed.append(cid)
 
-        # Проверка прав доступа: ограниченный админ может сохранять только в свою компанию
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        # Проверка прав доступа: ограниченный админ может сохранять только в разрешенные ему компании
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             for cid in company_ids_processed:
-                if cid != user["company_id"]:
+                if cid is None:
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+                elif cid not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
         if not content.strip():
@@ -778,16 +793,25 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
 
         # Проверка прав по организации для ограниченных администраторов
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             try:
                 rel = source_path.relative_to(data_path)
-                if not rel.parts or rel.parts[0] != user["company_id"]:
+                if not rel.parts:
+                    raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                first_part = rel.parts[0]
+                if first_part == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                elif first_part not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
             except ValueError:
                 raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
 
-            if body.company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в другую организацию")
+            target_cid = body.company_id or "common"
+            if target_cid not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
         old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
@@ -854,9 +878,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(doc_path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
 
         if not full_path.exists():
@@ -883,9 +915,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
 
         if not full_path.exists():
@@ -905,13 +945,19 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             filtered_index = []
             for path in to_index:
                 try:
                     rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == user["company_id"]:
-                        filtered_index.append(path)
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            filtered_index.append(path)
+                        elif first_part in user_company_ids:
+                            filtered_index.append(path)
                 except ValueError:
                     pass
             to_index = filtered_index
@@ -919,8 +965,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             filtered_delete = []
             for path in to_delete:
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == user["company_id"]:
-                    filtered_delete.append(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        filtered_delete.append(path)
+                    elif first_part in user_company_ids:
+                        filtered_delete.append(path)
             to_delete = filtered_delete
             
             has_changes = len(to_index) > 0 or len(to_delete) > 0
@@ -949,7 +999,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] == "superadmin" or not user["company_id"] or user["company_id"] == "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if is_super:
             # Суперадмин применяет всё
             to_index = list(_pending_changes["to_index"])
             to_delete = list(_pending_changes["to_delete"])
@@ -957,24 +1009,32 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             _pending_changes["to_delete"].clear()
         else:
             # Ограниченный админ применяет только свои
-            company_id = user["company_id"]
-            
             # Фильтруем to_index (абсолютные пути)
             for path in list(_pending_changes["to_index"]):
                 try:
                     rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == company_id:
-                        to_index.append(path)
-                        _pending_changes["to_index"].remove(path)
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
+                        elif first_part in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
                 except ValueError:
                     pass
             
             # Фильтруем to_delete (относительные пути)
             for path in list(_pending_changes["to_delete"]):
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == company_id:
-                    to_delete.append(path)
-                    _pending_changes["to_delete"].remove(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
+                    elif first_part in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
                     
         if not to_index and not to_delete:
             return {"success": True, "message": "Нет изменений для применения."}
