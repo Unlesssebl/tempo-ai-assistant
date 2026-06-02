@@ -37,47 +37,35 @@ class HybridSearchService:
         self.name_matcher = FuzzyNameMatcher()
 
     async def initialize(self):
-        """Явная инициализация при старте сервиса (построение словаря FuzzyNameMatcher)."""
+        """Явная инициализация при старте сервиса (построение словаря FuzzyNameMatcher).
+        
+        Загружает ТОЛЬКО имена сотрудников из contacts.db (≈2500 записей),
+        а не весь корпус документов из Qdrant — предотвращает OOM на больших базах.
+        """
         async with self._bm25_lock:
             if self._initialized:
                 return
             
-            logger.info("[+] Инициализация HybridSearchService (FuzzyMatcher)...")
-            client = self.client_manager.get_qdrant_client()
-            loop = asyncio.get_running_loop()
+            logger.info("[+] Инициализация HybridSearchService (FuzzyMatcher из contacts.db)...")
             
-            corpus_texts = []
-            offset = None
+            contact_names: list[str] = []
+            db_path = self.config.data_path / "contacts.db"
+            
             try:
-                while True:
-                    points, next_offset = await loop.run_in_executor(
-                        None,
-                        lambda off=offset: client.scroll(
-                            collection_name=self.config.collection_name,
-                            limit=256,
-                            offset=off,
-                            with_payload=True,
-                            with_vectors=False,
-                        ),
-                    )
-                    
-                    for point in points:
-                        payload = point.payload or {}
-                        text = payload.get("original_text") or payload.get("text", "")
-                        if text:
-                            corpus_texts.append(text)
-                            
-                    if next_offset is None:
-                        break
-                    offset = next_offset
-            except ValueError as e:
-                if "not found" in str(e).lower():
-                    logger.warning(f"Коллекция {self.config.collection_name} не найдена. FuzzyNameMatcher пропущен.")
-                else:
-                    raise
+                import aiosqlite
+                async with aiosqlite.connect(str(db_path)) as db:
+                    async with db.execute("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''") as cursor:
+                        rows = await cursor.fetchall()
+                        contact_names = [row[0] for row in rows]
+                logger.info("[+] Загружено %d ФИО из contacts.db", len(contact_names))
+            except Exception as e:
+                logger.warning(
+                    "[!] Не удалось загрузить contacts.db (%s): %s. FuzzyNameMatcher будет пуст.",
+                    db_path, e,
+                )
             
-            if corpus_texts:
-                await asyncio.to_thread(self.name_matcher.rebuild, corpus_texts)
+            if contact_names:
+                await asyncio.to_thread(self.name_matcher.rebuild_from_names, contact_names)
                 self._initialized = True
                 logger.info("[+] HybridSearchService успешно инициализирован (FuzzyMatcher)")
             else:
