@@ -762,12 +762,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if company_ids is None:
             # Если не передан список, берем одиночное поле
             company_id = body.get("company_id")
-            company_ids = [company_id] if company_id is not None else ["common"]
+            company_ids = [company_id] if company_id is not None else ["shared"]
             
-        # Превращаем 'common' и None/пустую строку в None (для общих)
+        # Превращаем 'shared', 'common' и None/пустую строку в None (для общих)
         company_ids_processed = []
         for cid in company_ids:
-            if cid in ("common", "", None):
+            if cid in ("shared", "common", "", None):
                 company_ids_processed.append(None)
             else:
                 company_ids_processed.append(cid)
@@ -789,7 +789,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             match = re.match(r"^---\s*\n(.*?)\n---\s*\n", md_text, re.DOTALL)
             if not match:
                 # Если frontmatter нет, мы можем добавить его
-                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "common"}"\n---\n\n'
+                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "shared"}"\n---\n\n'
                 return fm + md_text
                 
             fm_content = match.group(1)
@@ -798,13 +798,13 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 # Заменяем значение
                 fm_content_updated = re.sub(
                     r"^company_id\s*:.*$",
-                    f'company_id: "{target_cid or "common"}"',
+                    f'company_id: "{target_cid or "shared"}"',
                     fm_content,
                     flags=re.MULTILINE
                 )
             else:
                 # Добавляем company_id
-                fm_content_updated = fm_content + f'\ncompany_id: "{target_cid or "common"}"'
+                fm_content_updated = fm_content + f'\ncompany_id: "{target_cid or "shared"}"'
                 
             return f"---\n{fm_content_updated}\n---\n" + md_text[match.end():]
 
@@ -815,8 +815,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             
             # Проверка прав доступа к целевой папке
             if not is_super:
-                if first_segment == "common":
-                    if "common" not in user_company_ids:
+                if first_segment in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
                         raise HTTPException(status_code=403, detail="Нет прав на сохранение в общие документы")
                 elif first_segment not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
@@ -829,7 +829,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             file_path = target_dir / f"{safe_name}.md"
             
             # Адаптируем YAML frontmatter под целевую компанию
-            target_company_id = None if first_segment == "common" else first_segment
+            target_company_id = None if first_segment in ("shared", "common") else first_segment
             adapted_content = adapt_frontmatter(content, target_company_id)
             
             file_path.write_text(adapted_content, encoding="utf-8")
@@ -847,7 +847,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             if not is_super:
                 for cid in company_ids_processed:
                     if cid is None:
-                        if "common" not in user_company_ids:
+                        if "common" not in user_company_ids and "shared" not in user_company_ids:
                             raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
                     elif cid not in user_company_ids:
                         raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
@@ -856,7 +856,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 if company_id:
                     target_dir = data_path / company_id
                 else:
-                    target_dir = data_path / "common"
+                    target_dir = data_path / "shared"
                 target_dir.mkdir(parents=True, exist_ok=True)
 
                 # Безопасное имя файла
@@ -1040,16 +1040,16 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 if not rel.parts:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
                 first_part = rel.parts[0]
-                if first_part == "common":
-                    if "common" not in user_company_ids:
+                if first_part in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
                         raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
                 elif first_part not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
             except ValueError:
                 raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
 
-            target_cid = body.company_id or "common"
-            if target_cid not in user_company_ids:
+            target_cid = body.company_id or "shared"
+            if target_cid not in user_company_ids and target_cid != "shared":
                 raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
@@ -1059,7 +1059,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if body.company_id:
             target_dir = data_path / body.company_id
         else:
-            target_dir = data_path / "common"
+            target_dir = data_path / "shared"
 
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / source_path.name
