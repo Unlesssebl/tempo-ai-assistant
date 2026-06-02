@@ -11,6 +11,7 @@ const PAGE_SIZE = 50;
 let currentLogs = [];
 let allDocuments = [];
 let currentCompanyFilter = 'all';
+let currentExplorerPath = '';
 let currentUser = null;
 
 const PERMISSION_NAMES = {
@@ -179,6 +180,16 @@ function showApp() {
       btnAddDoc.classList.remove('hidden');
     } else {
       btnAddDoc.classList.add('hidden');
+    }
+  }
+
+  // Скрываем кнопку создания папок во фронтенде, если нет прав add_documents
+  const btnCreateFolder = document.getElementById('btnCreateFolder');
+  if (btnCreateFolder) {
+    if (hasPerm('add_documents')) {
+      btnCreateFolder.classList.remove('hidden');
+    } else {
+      btnCreateFolder.classList.add('hidden');
     }
   }
 
@@ -674,11 +685,12 @@ async function loadDocuments() {
   if (grid) grid.innerHTML = '';
 
   try {
-    const data = await apiFetch('/api/documents');
+    const data = await apiFetch(`/api/documents?path=${encodeURIComponent(currentExplorerPath)}`);
     if (!data) return;
     if (loading) loading.classList.add('hidden');
 
-    allDocuments = data.documents || [];
+    allDocuments = data.items || [];
+    renderBreadcrumbs(data.breadcrumbs || []);
     buildDocFilterTabs();
     renderDocuments();
     checkPendingChanges();
@@ -687,61 +699,30 @@ async function loadDocuments() {
   }
 }
 
-function buildDocFilterTabs() {
-  const container = document.getElementById('docCompanyFilterTabs');
+function renderBreadcrumbs(crumbs) {
+  const container = document.getElementById('explorerBreadcrumbs');
   if (!container) return;
   
-  const userCompanyIds = currentUser.company_ids || [];
-  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
-  
-  if (!isSuper) {
-    // Ограниченный администратор - показываем вкладки только для разрешенных ему компаний
-    let html = '';
-    
-    // Если текущий фильтр не входит в разрешенные, выберем первую компанию из списка
-    if (!userCompanyIds.includes(currentCompanyFilter)) {
-      currentCompanyFilter = userCompanyIds[0] || 'all';
+  container.innerHTML = crumbs.map((crumb, idx) => {
+    const isLast = idx === crumbs.length - 1;
+    if (isLast) {
+      return `<span style="color: var(--text-normal); font-weight: 600;">${escapeHtml(crumb.name)}</span>`;
     }
-    
-    userCompanyIds.forEach(id => {
-      let label = '';
-      let count = 0;
-      if (id === 'common') {
-        label = '📁 Общие';
-        count = allDocuments.filter(doc => !doc.company).length;
-      } else {
-        const name = COMPANIES[id] || id;
-        label = name.replace('АО ', '').replace('ООО ', '').replace(/"/g, '');
-        count = allDocuments.filter(doc => doc.company === id).length;
-      }
-      
-      html += `
-        <button class="tab ${currentCompanyFilter === id ? 'active' : ''}" onclick="filterDocsByCompany('${id}', this)">
-          ${label} (${count})
-        </button>
-      `;
-    });
-    
-    container.innerHTML = html;
-    return;
-  }
-  
-  const commonCount = allDocuments.filter(doc => !doc.company).length;
-  
-  container.innerHTML = `
-    <button class="tab ${currentCompanyFilter === 'all' ? 'active' : ''}" onclick="filterDocsByCompany('all', this)">🌍 Все документы (${allDocuments.length})</button>
-    <button class="tab ${currentCompanyFilter === 'common' ? 'active' : ''}" onclick="filterDocsByCompany('common', this)">📁 Общие (${commonCount})</button>
-  `;
-  
-  Object.entries(COMPANIES).forEach(([id, name]) => {
-    const count = allDocuments.filter(doc => doc.company === id).length;
-    
-    const btn = document.createElement('button');
-    btn.className = `tab ${currentCompanyFilter === id ? 'active' : ''}`;
-    btn.textContent = `${name.replace('АО ', '').replace('ООО ', '').replace(/"/g, '')} (${count})`;
-    btn.onclick = (e) => filterDocsByCompany(id, btn);
-    container.appendChild(btn);
-  });
+    return `
+      <span class="breadcrumb-item" style="cursor: pointer; text-decoration: underline; color: var(--accent);" onclick="navigateExplorer('${escapeHtml(crumb.path)}')">${escapeHtml(crumb.name)}</span>
+      <span style="opacity: 0.5; margin: 0 4px;">/</span>
+    `;
+  }).join('');
+}
+
+window.navigateExplorer = function(path) {
+  currentExplorerPath = path;
+  loadDocuments();
+};
+
+function buildDocFilterTabs() {
+  const container = document.getElementById('docCompanyFilterTabs');
+  if (container) container.classList.add('hidden');
 }
 
 function filterDocsByCompany(companyId, btnEl) {
@@ -761,14 +742,9 @@ function renderDocuments() {
   if (!grid) return;
   
   let docs = allDocuments;
-  if (currentCompanyFilter === 'common') {
-    docs = allDocuments.filter(doc => !doc.company);
-  } else if (currentCompanyFilter !== 'all') {
-    docs = allDocuments.filter(doc => doc.company === currentCompanyFilter);
-  }
   
   if (!docs.length) {
-    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);grid-column: 1 / -1;">Документы в этом разделе отсутствуют</div>';
+    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);grid-column: 1 / -1;">Папка пуста</div>';
     return;
   }
   
@@ -776,32 +752,46 @@ function renderDocuments() {
   const canDelete = hasPerm('delete_documents');
   
   grid.innerHTML = docs.map(doc => {
-    const isCommon = !doc.company;
+    if (doc.is_dir) {
+      return `
+        <div class="doc-card folder-card" style="cursor: pointer; border-color: rgba(255,255,255,0.1); transition: transform 0.2s, border-color 0.2s;" onclick="navigateExplorer('${escapeHtml(doc.path)}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <span class="company-badge common">${escapeHtml(doc.company_name || 'Папка')}</span>
+          </div>
+          <div class="doc-name" style="font-weight: 600; color: var(--accent); font-size: 15px;">📁 ${escapeHtml(doc.name)}</div>
+          <div class="doc-meta" style="font-size:12px;color:var(--text-muted); margin-top: 4px;">Папка</div>
+          <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
+        </div>
+      `;
+    }
+    
     const size = doc.size < 1024 ? `${doc.size} B` : doc.size < 1048576 ? `${(doc.size/1024).toFixed(1)} KB` : `${(doc.size/1048576).toFixed(1)} MB`;
     const modified = doc.modified ? new Date(doc.modified * 1000).toLocaleDateString('ru') : '';
+    const firstSegment = doc.path.split('/')[0];
+    
     return `
       <div class="doc-card">
         <div>
-          <span class="company-badge ${isCommon?'common':''}">${doc.company_name}</span>
+          <span class="company-badge">${escapeHtml(doc.company_name)}</span>
         </div>
-        <div class="doc-name">📄 ${doc.name}</div>
+        <div class="doc-name">📄 ${escapeHtml(doc.name)}</div>
         ${doc.title ? `<div class="doc-title" style="font-size: 13px; color: var(--accent); font-weight: 500; margin-top: -2px;">${escapeHtml(doc.title)}</div>` : ''}
         <div class="doc-meta">${size} · ${modified}</div>
-        <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${doc.path}</div>
+        <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
         <div class="doc-actions">
-          <button class="btn btn-secondary" onclick="viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
             <span>👁</span><span>Посмотреть</span>
           </button>
           ${canEdit ? `
-          <button class="btn btn-secondary" onclick="editDocument('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Изменить">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); editDocument('${escapeHtml(doc.path)}', '${firstSegment}')" title="Изменить">
             <span>✏️</span><span>Изменить</span>
           </button>
-          <button class="btn btn-secondary" onclick="showMoveDocModal('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Перенести">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); showMoveDocModal('${escapeHtml(doc.path)}', '${firstSegment}')" title="Перенести">
             <span>📦</span><span>Перенести</span>
           </button>
           ` : ''}
           ${canDelete ? `
-          <button class="btn btn-danger" onclick="deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
+          <button class="btn btn-danger" onclick="event.stopPropagation(); deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
             <span>🗑</span><span>Удалить</span>
           </button>
           ` : ''}
@@ -993,7 +983,7 @@ async function saveDocument() {
   try {
     const data = await apiFetch('/api/documents/save', {
       method: 'POST',
-      body: JSON.stringify({content, filename, company_ids}),
+      body: JSON.stringify({content, filename, company_ids, path: currentExplorerPath}),
     });
     const el = document.getElementById('saveResult');
     el.textContent = data.message;
@@ -1799,6 +1789,53 @@ async function deleteAdmin(adminId, username) {
     toast('Ошибка удаления: ' + err.message, 'error');
   }
 }
+
+window.showCreateFolderModal = function() {
+  const userCompanyIds = currentUser.company_ids || [];
+  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
+  
+  if (!currentExplorerPath && !isSuper) {
+    toast('Пожалуйста, выберите папку организации для создания подпапки', 'error');
+    return;
+  }
+  
+  const bodyHtml = `
+    <div class="form-group">
+      <label>Название новой папки</label>
+      <input type="text" class="text-input" id="newFolderName" placeholder="Например: policies">
+    </div>
+  `;
+  openModal(
+    'Создать папку',
+    bodyHtml,
+    `
+      <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-primary" onclick="submitCreateFolder()">📁 Создать</button>
+    `
+  );
+};
+
+window.submitCreateFolder = async function() {
+  const name = document.getElementById('newFolderName').value.trim();
+  if (!name) {
+    toast('Введите имя папки', 'error');
+    return;
+  }
+  
+  const targetPath = currentExplorerPath ? `${currentExplorerPath}/${name}` : name;
+  
+  try {
+    await apiFetch('/api/documents/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path: targetPath })
+    });
+    toast('Папка создана!', 'success');
+    closeModal();
+    loadDocuments();
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+  }
+};
 
 // ── Init ──────────────────────────────────────────────────────────────────
 

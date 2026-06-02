@@ -246,9 +246,11 @@
                     <h1>База знаний</h1>
                     <div class="header-actions">
                         <button id="btnApplyChanges" class="btn btn-success" disabled onclick="applyPendingChanges()">⚡ Применить изменения</button>
+                        <button id="btnCreateFolder" class="btn btn-secondary" onclick="showCreateFolderModal()">📁 Создать папку</button>
                         <button class="btn btn-primary" onclick="showDocUpload()">+ Добавить документ</button>
                     </div>
                 </div>
+                <div id="explorerBreadcrumbs" class="breadcrumbs-container" style="margin-bottom: 16px; font-size: 14px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);"></div>
 
                 <!-- Upload Panel (hidden by default) -->
                 <div id="docUploadPanel" class="card glass hidden">

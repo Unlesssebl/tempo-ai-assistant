@@ -531,67 +531,142 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     # ─── Документы ────────────────────────────────────────────────────────
 
     @app.get("/api/documents")
-    async def get_documents(user: Dict = Depends(require_permission("view_documents"))):
+    async def get_documents(path: str = "", user: Dict = Depends(require_permission("view_documents"))):
         from src.core.constants import COMPANIES
         data_path = Path(_config.data_path)
-        docs = []
         
-        # Определяем, какие папки сканировать
+        # Нормализуем путь
+        normalized_path = path.strip().replace("\\", "/").strip("/")
+        
         user_company_ids = user.get("company_ids", [])
         is_super = user["role"] == "superadmin" or "all" in user_company_ids
         is_restricted = not is_super
         
-        # Общие документы (сканируем только если не ограничены ИЛИ есть доступ к common)
-        if not is_restricted or "common" in user_company_ids:
-            common_path = data_path / "common"
-            if common_path.exists():
-                for f in sorted(common_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": None,
-                            "company_name": "Все предприятия",
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Документы предприятий
-        companies_to_scan = [c for c in user_company_ids if c in COMPANIES] if is_restricted else list(COMPANIES.keys())
-        for company_id in companies_to_scan:
-            company_path = data_path / company_id
-            if company_path.exists():
-                for f in sorted(company_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": company_id,
-                            "company_name": COMPANIES.get(company_id, company_id),
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Остальные папки (сканируем только если не ограничены)
-        if not is_restricted:
+        parts = Path(normalized_path).parts if normalized_path else ()
+        
+        # Проверка прав доступа
+        if normalized_path:
+            first_segment = parts[0] if parts else ""
+            if is_restricted and first_segment not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+                
+        target_dir = (data_path / normalized_path).resolve()
+        if not target_dir.exists() or not target_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Директория не найдена")
+            
+        # Защита от выхода за пределы data_path
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            raise HTTPException(status_code=403, detail="Недопустимый путь")
+            
+        items = []
+        
+        if not normalized_path:
+            # Корневой уровень
+            allowed_dirs = set(COMPANIES.keys()) | {"common"}
+            if is_restricted:
+                allowed_dirs = {d for d in allowed_dirs if d in user_company_ids}
+                
             for item in sorted(data_path.iterdir()):
-                if item.is_dir() and item.name not in {*COMPANIES, "common", ".chunks_cache"}:
-                    for f in sorted(item.rglob("*")):
-                        if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                            docs.append({
-                                "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                                "name": f.name,
-                                "title": _extract_doc_title(f),
-                                "company": None,
-                                "company_name": f"Общие / {item.name}",
-                                "size": f.stat().st_size,
-                                "modified": f.stat().st_mtime,
-                            })
-        return {"documents": docs, "total": len(docs)}
+                if item.is_dir():
+                    if item.name in allowed_dirs:
+                        items.append({
+                            "name": item.name,
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы"
+                        })
+                    elif is_super and item.name not in {".chunks_cache"}:
+                        items.append({
+                            "name": item.name,
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": f"Папка / {item.name}"
+                        })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    items.append({
+                        "name": item.name,
+                        "path": item.name,
+                        "is_dir": False,
+                        "title": _extract_doc_title(item),
+                        "company_name": "Все предприятия",
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+        else:
+            # Внутри какой-то директории
+            first_segment = parts[0] if parts else ""
+            company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment != "common" else "Общие документы"
+            
+            for item in sorted(target_dir.iterdir()):
+                rel_path = str(item.relative_to(data_path)).replace("\\", "/")
+                if item.is_dir() and item.name not in {".chunks_cache"}:
+                    items.append({
+                        "name": item.name,
+                        "path": rel_path,
+                        "is_dir": True,
+                        "company_name": company_name
+                    })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    items.append({
+                        "name": item.name,
+                        "path": rel_path,
+                        "is_dir": False,
+                        "title": _extract_doc_title(item),
+                        "company_name": company_name,
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+                    
+        # Конструируем хлебные крошки
+        breadcrumbs = [{"name": "🌍 База знаний", "path": ""}]
+        current_accumulated = []
+        for part in parts:
+            current_accumulated.append(part)
+            part_path = "/".join(current_accumulated)
+            
+            name = part
+            if part in COMPANIES:
+                name = COMPANIES[part]
+            elif part == "common":
+                name = "Общие документы"
+                
+            breadcrumbs.append({"name": name, "path": part_path})
+            
+        return {
+            "current_path": normalized_path,
+            "breadcrumbs": breadcrumbs,
+            "items": items,
+            "total": len(items)
+        }
 
-    @app.post("/api/documents/preview")
+    class MkdirRequest(BaseModel):
+        path: str
+
+    @app.post("/api/documents/mkdir")
+    async def create_directory(body: MkdirRequest, user: Dict = Depends(require_permission("add_documents"))):
+        if not body.path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+            
+        data_path = Path(_config.data_path)
+        normalized_path = body.path.strip().replace("\\", "/").strip("/")
+        
+        parts = Path(normalized_path).parts
+        if not parts:
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=400)
+            
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        
+        first_segment = parts[0]
+        if not is_super and first_segment not in user_company_ids:
+            raise HTTPException(status_code=403, detail="Нет прав на создание папки в этом разделе")
+            
+        target_dir = (data_path / normalized_path).resolve()
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return {"success": True, "message": f"Папка создана: {normalized_path}"}
     async def preview_document(
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
@@ -682,6 +757,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         # Получаем список выбранных компаний (поддерживаем обратную совместимость)
         company_ids = body.get("company_ids")
+        target_path = body.get("path")
+        
         if company_ids is None:
             # Если не передан список, берем одиночное поле
             company_id = body.get("company_id")
@@ -698,13 +775,6 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Проверка прав доступа: ограниченный админ может сохранять только в разрешенные ему компании
         user_company_ids = user.get("company_ids", [])
         is_super = user["role"] == "superadmin" or "all" in user_company_ids
-        if not is_super:
-            for cid in company_ids_processed:
-                if cid is None:
-                    if "common" not in user_company_ids:
-                        raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
-                elif cid not in user_company_ids:
-                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
         if not content.strip():
             return JSONResponse({"error": "Содержимое пустое"}, status_code=400)
@@ -738,33 +808,77 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 
             return f"---\n{fm_content_updated}\n---\n" + md_text[match.end():]
 
-        for company_id in company_ids_processed:
-            if company_id:
-                target_dir = data_path / company_id
-            else:
-                target_dir = data_path / "common"
+        if target_path:
+            target_path_norm = target_path.strip().replace("\\", "/").strip("/")
+            parts = Path(target_path_norm).parts
+            first_segment = parts[0] if parts else ""
+            
+            # Проверка прав доступа к целевой папке
+            if not is_super:
+                if first_segment == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение в общие документы")
+                elif first_segment not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+                    
+            target_dir = data_path / target_path_norm
             target_dir.mkdir(parents=True, exist_ok=True)
-
+            
             # Безопасное имя файла
             safe_name = _safe_filename(Path(filename).stem)
-            target_path = target_dir / f"{safe_name}.md"
-
-            # Адаптируем YAML frontmatter под текущую компанию
-            adapted_content = adapt_frontmatter(content, company_id)
-
-            # Записываем файл
-            target_path.write_text(adapted_content, encoding="utf-8")
-            logger.info(f"Document saved: {target_path}")
-
+            file_path = target_dir / f"{safe_name}.md"
+            
+            # Адаптируем YAML frontmatter под целевую компанию
+            target_company_id = None if first_segment == "common" else first_segment
+            adapted_content = adapt_frontmatter(content, target_company_id)
+            
+            file_path.write_text(adapted_content, encoding="utf-8")
+            logger.info(f"Document saved: {file_path}")
+            
             # Добавляем в список изменений для индексации
-            _pending_changes["to_index"].add(str(target_path))
-            # Убираем из списка удаления на случай, если файл перезаписан
-            rel_path = str(target_path.relative_to(data_path)).replace("\\", "/")
+            _pending_changes["to_index"].add(str(file_path))
+            rel_path = str(file_path.relative_to(data_path)).replace("\\", "/")
             _pending_changes["to_delete"].discard(rel_path)
             saved_paths.append(rel_path)
+            
+            # Запускаем автоматическое обновление index.md в фоне
+            asyncio.create_task(_update_index_file_with_ai(str(file_path), target_company_id))
+        else:
+            if not is_super:
+                for cid in company_ids_processed:
+                    if cid is None:
+                        if "common" not in user_company_ids:
+                            raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+                    elif cid not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
-            # Запускаем автоматическое обновление index.md в фоне (на диске)
-            asyncio.create_task(_update_index_file_with_ai(str(target_path), company_id))
+            for company_id in company_ids_processed:
+                if company_id:
+                    target_dir = data_path / company_id
+                else:
+                    target_dir = data_path / "common"
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+                # Безопасное имя файла
+                safe_name = _safe_filename(Path(filename).stem)
+                target_file_path = target_dir / f"{safe_name}.md"
+
+                # Адаптируем YAML frontmatter под текущую компанию
+                adapted_content = adapt_frontmatter(content, company_id)
+
+                # Записываем файл
+                target_file_path.write_text(adapted_content, encoding="utf-8")
+                logger.info(f"Document saved: {target_file_path}")
+
+                # Добавляем в список изменений для индексации
+                _pending_changes["to_index"].add(str(target_file_path))
+                # Убираем из списка удаления на случай, если файл перезаписан
+                rel_path = str(target_file_path.relative_to(data_path)).replace("\\", "/")
+                _pending_changes["to_delete"].discard(rel_path)
+                saved_paths.append(rel_path)
+
+                # Запускаем автоматическое обновление index.md в фоне (на диске)
+                asyncio.create_task(_update_index_file_with_ai(str(target_file_path), company_id))
 
         paths_str = ", ".join(saved_paths)
         return {
