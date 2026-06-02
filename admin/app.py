@@ -960,6 +960,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         file_name: str
         tags: List[str]
         questions_answered: List[str]
+        last_updated: Optional[str] = None
 
     @app.post("/upload")
     async def upload_document(body: UploadRequest, user: Dict = Depends(require_auth)):
@@ -986,7 +987,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             sanitized_stem = "document"
         file_name = f"{sanitized_stem}.md"
 
-        last_updated = datetime.now().strftime("%Y-%m-%d")
+        last_updated = body.last_updated
+        if not last_updated:
+            last_updated = datetime.now().strftime("%Y-%m-%d")
         source_file = f"{body.organization}/{body.category}/{file_name}"
 
         # Формируем YAML Front Matter

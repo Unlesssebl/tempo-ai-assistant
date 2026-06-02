@@ -807,6 +807,7 @@ function showDocUpload() {
   // Clear inputs
   document.getElementById('docTitleDraft').value = '';
   document.getElementById('docTextContent').value = '';
+  document.getElementById('aiLastUpdated').value = '';
   document.getElementById('fileInput').value = '';
   document.getElementById('selectedFile').classList.add('hidden');
   document.getElementById('selectedFile').textContent = '';
@@ -940,6 +941,7 @@ async function finalUploadDocument() {
   const file_name = document.getElementById('aiFilename').value;
   const tagsStr = document.getElementById('aiTags').value;
   const questionsStr = document.getElementById('aiQuestions').value;
+  const last_updated = document.getElementById('aiLastUpdated').value;
 
   let text = '';
   if (docMode === 'file' && selectedFile) {
@@ -965,7 +967,8 @@ async function finalUploadDocument() {
     description,
     file_name,
     tags,
-    questions_answered
+    questions_answered,
+    last_updated: last_updated || null
   };
 
   const msgEl = document.getElementById('uploadResultMsg');
@@ -1126,6 +1129,7 @@ async function editDocument(path, companyId) {
     let description = '';
     let tags = '';
     let questions = '';
+    let lastUpdated = '';
     
     const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
     if (match) {
@@ -1163,6 +1167,8 @@ async function editDocument(path, companyId) {
           title = line.substring(6).trim().replace(/^["']|["']$/g, '');
         } else if (line.startsWith('description:')) {
           description = line.substring(12).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('last_updated:')) {
+          lastUpdated = line.substring(13).trim().replace(/^["']|["']$/g, '');
         } else if (line.startsWith('tags:')) {
           const tagsMatch = line.match(/tags:\s*\[(.*)\]/);
           if (tagsMatch) {
@@ -1183,6 +1189,7 @@ async function editDocument(path, companyId) {
     document.getElementById('aiFilename').value = filename;
     document.getElementById('aiTags').value = tags;
     document.getElementById('aiQuestions').value = questions;
+    document.getElementById('aiLastUpdated').value = lastUpdated;
 
     document.getElementById('docAiResultSection').classList.remove('hidden');
 
