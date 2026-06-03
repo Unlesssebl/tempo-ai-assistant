@@ -404,6 +404,8 @@ class AgentOrchestrator:
         if state.get("answer"):
             return ["generate_answer"]
         intent = state["intent"].intent
+        if intent == "personal":
+            return ["generate_answer"]
         if intent == "contact_search":
             return ["search_contacts"]
         elif intent == "emergency":

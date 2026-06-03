@@ -5,8 +5,8 @@ from langgraph.graph.message import add_messages
 
 class QueryIntent(BaseModel):
     """Схема классификации намерения пользователя."""
-    intent: Literal["contact_search", "location_search", "hr_policy", "general_info", "emergency", "weather"] = Field(
-        description="Категория запроса пользователя. 'emergency' — для ЧС, травм и медпунктов. 'weather' — для прогноза погоды."
+    intent: Literal["contact_search", "location_search", "hr_policy", "general_info", "emergency", "weather", "personal"] = Field(
+        description="Категория запроса пользователя. 'emergency' — для ЧС, травм и медпунктов. 'weather' — для прогноза погоды. 'personal' — вопросы пользователя о себе или об истории диалога."
     )
     is_topic_shift: bool = Field(
         default=False,

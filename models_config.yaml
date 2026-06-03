@@ -2,7 +2,7 @@
 # Базовые настройки берутся отсюда, можно переопределить через .env
 
 text_model:
-  name: "gemini-3.5-flash"  # Переопределить через GEMINI_TEXT_MODEL в .env
+  name: "gemini-3.1-flash-lite"  # Переопределить через GEMINI_TEXT_MODEL в .env
   api_version: "v1beta"
   generation:
     temperature: 0.3
@@ -14,9 +14,9 @@ text_model:
     disabled: true
   fallbacks:
     # Tier-1: пробуем первой при недоступности основной (gemini-3.1-flash-lite)
-    - "gemini-3.1-flash-lite"
+    - "gemini-3.5-flash"
     # Tier-2: только если Tier-1 тоже недоступна
-    - "gemini-2.5-flash-lite"
+    - "gemini-2.5-flash"
   prompt:
     template: |
       Ты — корпоративный AI-ассистент холдинговой компании ТЭМПО.
