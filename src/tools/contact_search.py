@@ -1,119 +1,135 @@
-import aiosqlite
 import logging
-from typing import Optional, List, Dict, Any
-from rapidfuzz import process, fuzz, utils
-from src.utils.company_mapper import get_company_keywords
+from typing import Optional, Any
+from pydantic import BaseModel, Field
+import asyncpg
+from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 
+class ContactSearchInput(BaseModel):
+    """Схема входных аргументов для инструмента поиска контактов."""
+    search_query: str = Field(
+        description="Имя, фамилия, должность или функция искомого лица (например, 'Иванов', 'Управляющий')"
+    )
+    company_filter: Optional[str] = Field(
+        default=None,
+        description="Название компании для фильтрации контактов (например, 'КМК', 'ЗТЭО', 'ИТЗ')"
+    )
+    exact_phone: Optional[str] = Field(
+        default=None,
+        description="Точный номер телефона для поиска владельца контакта"
+    )
+
 class ContactSearchTool:
-    def __init__(self, db_path: str = "data/contacts.db"):
-        self.db_path = db_path
+    """Инструмент для поиска контактов в PostgreSQL с использованием pg_trgm."""
+    
+    def __init__(self, config: Optional[Config] = None, db_path: Optional[str] = None):
+        # Принимаем config или инициализируем его по умолчанию. 
+        # db_path оставлен для обратной совместимости, но больше не используется.
+        self.config = config or Config.from_env()
+        self.db_url = self.config.database_url
 
-    async def search(self, target_person: str, target_company: Optional[str] = None) -> str:
+    async def search(
+        self, 
+        search_query: str = "", 
+        company_filter: Optional[str] = None, 
+        exact_phone: Optional[str] = None,
+        **kwargs
+    ) -> str:
         """
-        Поиск контактов в SQLite с использованием нечеткого сравнения (Fuzzy Matching).
+        Выполняет поиск контактов в PostgreSQL с использованием триграммного поиска.
         """
-        if not target_person:
-            return "Не указано имя или должность для поиска."
-
         # Логирование перед поиском
-        logger.info(f"[SQL SEARCH] Intent: contact_search | Person: {target_person} | Company: {target_company}")
+        logger.info(
+            f"[PG SEARCH] query: '{search_query}' | company: '{company_filter}' | phone: '{exact_phone}'"
+        )
+
+        # Валидация входных данных через Pydantic схему
+        try:
+            params_validated = ContactSearchInput(
+                search_query=search_query,
+                company_filter=company_filter,
+                exact_phone=exact_phone
+            )
+        except Exception as e:
+            logger.error(f"Validation error in ContactSearchTool: {e}")
+            return f"Ошибка валидации параметров поиска: {e}"
+
+        # Если поисковый запрос состоит только из цифр, а exact_phone не задан,
+        # перенаправляем запрос в exact_phone для точного поиска по номеру
+        q_digits = "".join(c for c in params_validated.search_query if c.isdigit())
+        if q_digits and len(q_digits) >= 4 and not params_validated.exact_phone:
+            params_validated.exact_phone = params_validated.search_query
+            params_validated.search_query = ""
+
+        if not params_validated.search_query and not params_validated.exact_phone:
+            return "Не указано имя, должность или телефон для поиска."
+
+        conditions = []
+        params = []
+        param_idx = 1
+        select_sml = "0.0 as sml"
+
+        # Фильтр по имени/должности с триграммным сходством
+        if params_validated.search_query:
+            params.append(params_validated.search_query)  # $1
+            params.append(f"%{params_validated.search_query}%")  # $2
+            select_sml = "similarity(full_name, $1) as sml"
+            conditions.append(
+                "(similarity(full_name, $1) > 0.3 OR full_name ILIKE $2 OR position ILIKE $2)"
+            )
+            param_idx = 3
+
+        # Фильтр по компании
+        if params_validated.company_filter:
+            params.append(f"%{params_validated.company_filter}%")
+            conditions.append(f"company ILIKE ${param_idx}")
+            param_idx += 1
+
+        # Фильтр по номеру телефона (с очисткой от нецифровых символов)
+        if params_validated.exact_phone:
+            phone_digits = "".join(c for c in params_validated.exact_phone if c.isdigit())
+            if len(phone_digits) >= 4:
+                params.append(f"%{phone_digits}%")
+                conditions.append(
+                    f"regexp_replace(phone, '\\D', '', 'g') ILIKE ${param_idx}"
+                )
+                param_idx += 1
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        query = f"""
+            SELECT id, company, department, full_name, position, phone, {select_sml}
+            FROM contacts
+            WHERE {where_clause}
+            ORDER BY sml DESC
+            LIMIT 5
+        """
 
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                
-                # 1. Извлекаем ВСЕХ контакты (база небольшая, это безопасно)
-                query = "SELECT * FROM contacts"
-                async with db.execute(query) as cursor:
-                    rows = await cursor.fetchall()
-                
-                if not rows:
-                    return "База контактов пуста."
+            if not self.db_url:
+                raise ValueError("DATABASE_URL не задана в конфигурации.")
 
-                # Подготавливаем слова для бонус-фильтра по компании
-                target_comp_words = []
-                if target_company:
-                    mapped_keywords = get_company_keywords(target_company)
-                    if mapped_keywords:
-                        target_comp_words = mapped_keywords
-                    else:
-                        target_comp_words = [w.strip().lower() for w in target_company.split() if len(w.strip()) > 2]
+            conn = await asyncpg.connect(self.db_url)
+            try:
+                rows = await conn.fetch(query, *params)
+            finally:
+                await conn.close()
 
-                # 2. Нечеткий поиск
-                results_with_scores = []
-                for row in rows:
-                    name_score = fuzz.WRatio(target_person, row['full_name'], processor=utils.default_process)
-                    name_partial_score = fuzz.partial_ratio(target_person, row['full_name'], processor=utils.default_process)
-                    
-                    scores = [
-                        name_score,
-                        fuzz.WRatio(target_person, row['position'], processor=utils.default_process),
-                        fuzz.WRatio(target_person, row['department'], processor=utils.default_process),
-                        name_partial_score,
-                        fuzz.partial_ratio(target_person, row['position'], processor=utils.default_process),
-                        fuzz.partial_ratio(target_person, row['department'], processor=utils.default_process)
-                    ]
-                    
-                    # Проверка совпадения номера телефона
-                    # Требуем минимум 4 цифры и только точное совпадение, чтобы не срабатывать
-                    # на трёхзначные подстроки в именах/фразах (например, '100 сотрудников' → '4100').
-                    phone_score = 0
-                    target_digits = "".join([c for c in target_person if c.isdigit()])
-                    phone_digits = "".join([c for c in (row['phone'] or "") if c.isdigit()])
-                    if len(target_digits) >= 4 and phone_digits and target_digits == phone_digits:
-                        phone_score = 100
+            if not rows:
+                search_term = params_validated.search_query or params_validated.exact_phone
+                return f"По запросу '{search_term}' ничего не найдено."
 
-                    max_score = max(max(scores), phone_score)
-                    
-                    if max_score >= 70: # Порог вхождения
-                        # СТРОГИЙ ФИЛЬТР ПО КОМПАНИИ
-                        # Если совпадение по имени очень высокое (>90), игнорируем фильтр компании
-                        if target_comp_words and not (name_score >= 90 or name_partial_score >= 90):
-                            row_comp = (row['company'] or "").lower()
-                            
-                            # Проверяем пересечение слов
-                            if not any(w in row_comp for w in target_comp_words):
-                                continue
-                                
-                            # Спец. защита от путаницы Технотрон и Технотрон-Метиз
-                            if "метиз" in row_comp and "метиз" not in target_comp_words:
-                                continue # Искали Технотрон, а попали на Метиз
-                            if "метиз" in target_comp_words and "метиз" not in row_comp:
-                                continue # Искали Метиз, а попали на обычный Технотрон
-                                
-                        results_with_scores.append((max_score, row))
+            formatted_results = []
+            for i, row in enumerate(rows, 1):
+                logger.info(f"[PG SEARCH] Match found: {row['full_name']} | Similarity: {row.get('sml', 0.0):.3f}")
+                formatted_results.append(
+                    f"{i}. {row['full_name'] or '—'} — {row['position'] or '—'}\n"
+                    f"   Отдел: {row['department'] or '—'}, Компания: {row['company'] or '—'}\n"
+                    f"   Тел: {row['phone'] or '—'}"
+                )
 
-                # Сортируем по убыванию скора
-                results_with_scores.sort(key=lambda x: x[0], reverse=True)
-                
-                # Умная обрезка результатов, чтобы LLM не путалась в похожих фамилиях
-                top_results = []
-                if results_with_scores:
-                    best_score = results_with_scores[0][0]
-                    # Если есть явный лидер с высокой уверенностью
-                    if best_score >= 90:
-                        # Берем только тех, кто отстает от лидера не более чем на 5 баллов
-                        top_results = [r for r in results_with_scores if best_score - r[0] <= 5][:3]
-                    else:
-                        # Иначе берем стандартный топ-3
-                        top_results = results_with_scores[:3]
-
-                formatted_results = []
-                for score, row in top_results:
-                    logger.info(f"[SQL SEARCH] Match found: {row['full_name']} | Score: {score}")
-                    formatted_results.append(
-                        f"{len(formatted_results) + 1}. {row['full_name']} — {row['position']}\n"
-                        f"   Отдел: {row['department']}, Компания: {row['company']}\n"
-                        f"   Тел: {row['phone']}"
-                    )
-
-                if not formatted_results:
-                    return f"По запросу '{target_person}' ничего не найдено."
-
-                return "Найдены контакты:\n" + "\n\n".join(formatted_results)
+            return "Найдены контакты:\n\n" + "\n\n".join(formatted_results)
 
         except Exception as e:
-            logger.error(f"ContactSearchTool error: {e}")
+            logger.exception(f"ContactSearchTool error: {e}")
             return "Произошла ошибка при поиске в базе контактов."

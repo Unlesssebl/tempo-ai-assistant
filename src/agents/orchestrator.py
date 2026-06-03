@@ -246,23 +246,29 @@ class AgentOrchestrator:
 
     async def search_contacts(self, state: AgentState) -> Dict[str, Any]:
         logger.info("--- SEARCH CONTACTS (SQL) ---")
-        person = state["intent"].target_person or ""
-        company = state["intent"].target_company
+        intent = state["intent"]
+        person = intent.target_person or ""
+        company = intent.target_company
+        phone = getattr(intent, "exact_phone", None)
         
         # Расширяем поиск для руководителей (но НЕ если ищут помощника или секретаря)
         boss_keywords = ["управляющий", "директор", "руководитель", "начальник", "главный", "босс"]
         exclude_keywords = ["помощник", "секретарь", "приемная", "референт"]
         search_query = person
         
-        person_lower = person.lower()
-        if any(k in person_lower for k in boss_keywords) and not any(e in person_lower for e in exclude_keywords):
-            search_query = f"{person} директор управляющий руководитель помощник секретарь приемная"
-            logger.info(f"Expanded search query for boss: {search_query}")
+        if person:
+            person_lower = person.lower()
+            if any(k in person_lower for k in boss_keywords) and not any(e in person_lower for e in exclude_keywords):
+                search_query = f"{person} директор управляющий руководитель помощник секретарь приемная"
+                logger.info(f"Expanded search query for boss: {search_query}")
             
-        results = await self.contact_tool.search(
-            target_person=search_query,
-            target_company=company
-        )
+        kwargs = {
+            "search_query": search_query,
+            "company_filter": company,
+            "exact_phone": phone
+        }
+        
+        results = await self.contact_tool.search(**kwargs)
         
         # Извлекаем Отдел и Компанию из текстового результата (берем первую запись)
         import re
@@ -363,6 +369,9 @@ class AgentOrchestrator:
 {state['query']}
 
 ПРАВИЛА:
+RULE 1: Always prioritize checking the {{chat_history}} first. If the user's question can be answered strictly using the Chat History (e.g., their name, previous topics), answer it immediately WITHOUT saying 'information not found'.
+RULE 2: Use retrieved database context ONLY for external facts.
+
 1. Твой ответ должен быть САМОДОСТАТОЧНЫМ. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать "подробнее в документе", "см. раздел", "информация в базе знаний", упоминать названия разделов или любые названия документов из заголовков.
 2. ТАБЛИЦЫ И ГРАФИКИ: Если вопрос касается РАСПИСАНИЙ, ВРЕМЕНИ ИЛИ ЧИСЕЛ, и в контексте найдена ТАБЛИЦА — ты ОБЯЗАН вывести её ПОДРОБНО (или нужную строку из неё). НО если пользователь спрашивает про МЕСТОПОЛОЖЕНИЕ кабинета или отдела (где находится, как пройти), КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать адреса из "расписаний столовой" или "графиков обедов". Ищи фактическое место работы (АБК, этаж, крыло), а не место, где люди едят!
 3. ЗАПРЕЩЕНО ссылаться на любые внешние или внутренние разделы/базы данных. Твой ответ — это истина, которую ты сообщаешь напрямую.
@@ -403,6 +412,22 @@ class AgentOrchestrator:
         # Если ответ уже сформирован (например, самопредставление пользователя), пропускаем поиск
         if state.get("answer"):
             return ["generate_answer"]
+            
+        # Если запрос разговорный (например, "как меня зовут?"), касается истории чата
+        # и не запрашивает корпоративные данные, направляем напрямую к генерации ответа
+        query_lower = state["query"].lower()
+        conversational_phrases = [
+            "как меня зовут", "кто я", "мое имя", "моё имя", 
+            "что я спрашивал", "о чем мы", "о чём мы", 
+            "ты меня помнишь", "помнишь меня", "скажи моё имя", "скажи мое имя"
+        ]
+        is_conversational = any(phrase in query_lower for phrase in conversational_phrases)
+        has_corporate_keywords = any(word in query_lower for word in ["телефон", "номер", "контакт", "почта", "завод", "тэмпо", "кабинет", "схема", "документ", "инструкция"])
+        
+        if is_conversational and not has_corporate_keywords:
+            logger.info("Conversational query detected. Bypassing tool execution.")
+            return ["generate_answer"]
+
         intent = state["intent"].intent
         if intent == "personal":
             return ["generate_answer"]

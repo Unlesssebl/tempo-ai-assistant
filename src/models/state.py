@@ -20,6 +20,10 @@ class QueryIntent(BaseModel):
         default=None, 
         description="ФИО, должность или название отдела, если это поиск контактов."
     )
+    exact_phone: Optional[str] = Field(
+        default=None,
+        description="Точный номер телефона (4 цифры или более), если пользователь ищет контакт по номеру телефона."
+    )
     target_location: Optional[str] = Field(
         default=None,
         description="Название города для поиска погоды (например, 'Набережные Челны')."

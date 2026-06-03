@@ -55,19 +55,24 @@ class HybridSearchService:
             logger.info("[+] Инициализация HybridSearchService (FuzzyMatcher из contacts.db)...")
             
             contact_names: list[str] = []
-            db_path = self.config.data_path / "contacts.db"
             
             try:
-                import aiosqlite
-                async with aiosqlite.connect(str(db_path)) as db:
-                    async with db.execute("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''") as cursor:
-                        rows = await cursor.fetchall()
-                        contact_names = [row[0] for row in rows]
-                logger.info("[+] Загружено %d ФИО из contacts.db", len(contact_names))
+                import asyncpg
+                db_url = self.config.database_url
+                if not db_url:
+                    raise ValueError("DATABASE_URL не настроена.")
+                
+                conn = await asyncpg.connect(db_url)
+                try:
+                    rows = await conn.fetch("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''")
+                    contact_names = [row["full_name"] for row in rows]
+                finally:
+                    await conn.close()
+                logger.info("[+] Загружено %d ФИО из PostgreSQL (contacts)", len(contact_names))
             except Exception as e:
                 logger.warning(
-                    "[!] Не удалось загрузить contacts.db (%s): %s. FuzzyNameMatcher будет пуст.",
-                    db_path, e,
+                    "[!] Не удалось загрузить имена сотрудников из PostgreSQL: %s. FuzzyNameMatcher будет пуст.",
+                    e,
                 )
             
             if contact_names:
