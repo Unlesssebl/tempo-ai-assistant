@@ -45,6 +45,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     query: str
     user_company: Optional[str] # Выбранное пользователем предприятие
+    user_name: Optional[str]    # Имя пользователя, если он представился в диалоге
     intent: Optional[QueryIntent]
     extracted_context: Optional[str] # Извлеченный контекст из промежуточных шагов (например, отдел сотрудника)
     search_results: Annotated[List[str], clearable_add]

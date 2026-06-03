@@ -49,7 +49,8 @@ class AgentOrchestrator:
             {
                 "search_contacts": "search_contacts",
                 "search_documents": "search_documents",
-                "search_weather": "search_weather"
+                "search_weather": "search_weather",
+                "generate_answer": "generate_answer",  # для самопредставления и pre-computed ответов
             }
         )
         
@@ -106,14 +107,32 @@ class AgentOrchestrator:
             if query_lower.startswith(("а ", "и ", "ну а ")):
                 needs_decontextualization = True
 
+        # Ранний выход: если запрос содержит явно самодостаточные ключевые слова
+        # (новая тема, не требующая привязки к старому контексту), пропускаем LLM
+        TOPIC_SHIFT_SIGNALS = {
+            "погода", "прогноз", "температура", "дождь", "снег",
+            "травму", "травма", "скорую", "пожар", "медпункт",
+            "как устроиться", "как попасть на работу", "вакансия",
+        }
+        if needs_decontextualization:
+            if any(signal in query_lower for signal in TOPIC_SHIFT_SIGNALS):
+                logger.info("--- DECONTEXTUALIZING QUERY: skipped (topic-shift signal detected) ---")
+                return state["query"]
+
         if not needs_decontextualization:
             logger.info("--- DECONTEXTUALIZING QUERY: skipped (no context-dependent words) ---")
             return state["query"]
 
         logger.info("--- DECONTEXTUALIZING QUERY ---")
         
-        history_text = "\n".join([f"{'User' if i%2==0 else 'Assistant'}: {m.content if hasattr(m, 'content') else m}" 
-                                  for i, m in enumerate(messages[:-1])])
+        history_parts = []
+        for m in messages[-10:]:
+            # LangChain message types: 'human'/'user' for user, 'ai'/'assistant' for bot
+            msg_type = getattr(m, 'type', '')
+            role = "User" if msg_type in ('human', 'user') else "Assistant"
+            content = m.content if hasattr(m, 'content') else str(m)
+            history_parts.append(f"{role}: {content}")
+        history_text = "\n".join(history_parts)
         
         prompt = f"""Ты — AI-редактор контекста. Твоя задача — переформулировать текущий запрос пользователя так, чтобы он был понятен без истории диалога.
 
@@ -137,14 +156,55 @@ class AgentOrchestrator:
 
         try:
             resolved = await self.llm_service.generate(prompt, temperature=0.0)
-            return resolved.strip()
+            resolved = resolved.strip()
+            # Guard: если LLM вернул пустую строку, используем оригинальный запрос
+            return resolved if resolved else state["query"]
         except Exception as e:
             logger.error(f"Decontextualization failed: {e}")
             return state["query"]
 
+    def _extract_self_introduced_name(self, query: str) -> Optional[str]:
+        """
+        Детектирует самопредставление пользователя.
+        Возвращает имя если найдено, иначе None.
+        """
+        import re
+        q = query.strip()
+        # Patterns: 'Я [Name]', 'Меня зовут [Name]', 'Моё имя [Name]'
+        patterns = [
+            r'^\u044f\s+([\u0400-\u04ff][\u0400-\u04ff-]{1,30})$',          # Я Имя
+            r'^\u043cеня\s+зовут\s+([\u0400-\u04ff][\u0400-\u04ff-]{1,30})',  # Меня зовут Имя
+            r'^\u043cоё\s+имя\s+([\u0400-\u04ff][\u0400-\u04ff-]{1,30})',    # Моё имя Имя
+            r'^\u044f\s+([\u0400-\u04ff][\u0400-\u04ff-]{1,30}\s+[\u0400-\u04ff][\u0400-\u04ff-]{1,30})$',  # Я Имя Фамилия
+        ]
+        for pattern in patterns:
+            m = re.match(pattern, q.lower())
+            if m:
+                # Return original-case slice from query
+                name_lower = m.group(1)
+                idx = q.lower().find(name_lower)
+                return q[idx: idx + len(name_lower)].strip() if idx != -1 else m.group(1).capitalize()
+        return None
+
     async def analyze_query(self, state: AgentState) -> Dict[str, Any]:
         """Узел анализа интента с учетом контекста."""
         logger.info(f"--- ANALYZE QUERY (Stateless): {state['query']} ---")
+
+        # 0. Перехват самопредставления — до деконтекстуализации и роутинга
+        introduced_name = self._extract_self_introduced_name(state["query"])
+        if introduced_name:
+            logger.info(f"--- SELF-INTRODUCTION DETECTED: '{introduced_name}' ---")
+            greeting = f"Здравствуйте, {introduced_name}! Чем могу помочь?"
+            return {
+                "intent": QueryIntent(intent="general_info"),
+                "query": state["query"],
+                "user_name": introduced_name,
+                "messages": [("user", state["query"]), ("assistant", greeting)],
+                "search_results": ["__CLEAR__"],
+                "extracted_context": None,
+                "answer": greeting,
+            }
+
         
         # 1. Резолвим контекст (кто такой "он", "там" и т.д.)
         resolved_query = await self._decontextualize_query(state)
@@ -174,13 +234,14 @@ class AgentOrchestrator:
                 intent.target_company = mapped_company
                 logger.info(f"Using user-selected company fallback: {mapped_company}")
         
-        # Сохраняем в историю само сообщение
+        # Сохраняем в историю само сообщение; сбрасываем answer чтобы не short-circuit-нуть следующий запрос
         return {
             "intent": intent, 
             "query": resolved_query,
             "messages": [("user", state["query"])],
             "search_results": ["__CLEAR__"], # Очищаем корзину прошлого поиска через умный редьюсер
-            "extracted_context": None # Очищаем промежуточный контекст
+            "extracted_context": None,       # Очищаем промежуточный контекст
+            "answer": None,                  # Сбрасываем pre-computed ответ
         }
 
     async def search_contacts(self, state: AgentState) -> Dict[str, Any]:
@@ -265,15 +326,38 @@ class AgentOrchestrator:
 
     async def generate_answer(self, state: AgentState) -> Dict[str, Any]:
         logger.info("--- GENERATE FINAL ANSWER ---")
-        
+
+        # Если ответ уже сформирован на предыдущем шаге (например, самопредставление), возвращаем его
+        if state.get("answer"):
+            logger.info("--- GENERATE FINAL ANSWER: using pre-computed answer ---")
+            return {"answer": state["answer"]}
+
         # Склеиваем все результаты поиска в один текстовый блок
         context_block = "\n\n===\n\n".join(state.get("search_results", []))
+
+        # Формируем блок истории диалога для LLM (5 последних сообщений)
+        history_block = ""
+        messages = state.get("messages", [])
+        if messages:
+            history_parts = []
+            for m in messages[-10:]:
+                msg_type = getattr(m, 'type', '')
+                role = "Пользователь" if msg_type in ('human', 'user') else "Ассистент"
+                content = m.content if hasattr(m, 'content') else str(m)
+                history_parts.append(f"{role}: {content}")
+            if history_parts:
+                history_block = "\n\nИСТОРИЯ ДИАЛОГА (последние сообщения):\n" + "\n".join(history_parts)
+
+        # Имя пользователя, если он представился
+        user_name = state.get("user_name")
+        user_name_block = f"\nИМЯ ПОЛЬЗОВАТЕЛЯ: {user_name}" if user_name else ""
         
         prompt = f"""Ты — интеллектуальный корпоративный ассистент ГК «ТЭМПО».
-Твоя задача: ответить на вопрос пользователя, опираясь ТОЛЬКО на предоставленный контекст.
-
+Твоя задача: ответить на вопрос пользователя, опираясь на предоставленный контекст и историю диалога.
+{user_name_block}
 КОНТЕКСТ ДЛЯ ОТВЕТА:
 {context_block}
+{history_block}
 
 ВОПРОС ПОЛЬЗОВАТЕЛЯ (с учетом контекста):
 {state['query']}
@@ -295,6 +379,7 @@ class AgentOrchestrator:
 14. ПРАВИЛО ФОРМАТИРОВАНИЯ (ТОЛЬКО HTML): Используй <b>текст</b> для жирного шрифта, <i>текст</i> для курсива. ЗАПРЕЩЕНО использовать Markdown (** или *).
 15. ТОЧНОСТЬ ФАМИЛИЙ И КОНТАКТОВ: Если в результатах поиска контактов выдано несколько людей, КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ игнорировать первый контакт (под номером 1) и выбирать людей с 2 или 3 места только из-за того, что их фамилия кажется тебе "правильнее". Алгоритм уже отсортировал их: контакт №1 — самый релевантный вашему запросу. Выдавай информацию именно о нем.
 16. ТЕКСТ ВМЕСТО НОМЕРА: Если в предоставленном КОНТЕКСТЕ в поле "Тел:" вместо цифр указан текст (например, "Помощник Управляющего..."), ты ОБЯЗАН вывести этот текст пользователю как инструкцию по связи. ЗАПРЕЩЕНО скрывать этот текст или пытаться искать по нему новый контакт. Просто напиши: "Телефон: Помощник Управляющего...".
+17. ЛИЧНЫЕ ВОПРОСЫ: Если пользователь спрашивает о себе ("как меня зовут", "кто я", "что я спрашивал"), ищи ответ ИСКЛЮЧИТЕЛЬНО в ИСТОРИИ ДИАЛОГА выше — НЕ в базе знаний. Если пользователь назвал своё имя в диалоге, используй его.
 
 ПРАВИЛО ФОРМАТИРОВАНИЯ:
 Если в предоставленном КОНТЕКСТЕ есть ВНЕШНИЕ ссылки (URL на сайты, карты), ты ОБЯЗАН сохранить их в своем ответе в формате Markdown: [Текст ссылки](URL). 
@@ -308,9 +393,16 @@ class AgentOrchestrator:
             }
         except Exception as e:
             logger.exception(f"Synthesis error: {e}")
-            return {"answer": "Извините, произошла ошибка."}
+            err_msg = "Извините, произошла ошибка."
+            return {
+                "answer": err_msg,
+                "messages": [("assistant", err_msg)]
+            }
 
     def route_after_analysis(self, state: AgentState) -> List[str]:
+        # Если ответ уже сформирован (например, самопредставление пользователя), пропускаем поиск
+        if state.get("answer"):
+            return ["generate_answer"]
         intent = state["intent"].intent
         if intent == "contact_search":
             return ["search_contacts"]
