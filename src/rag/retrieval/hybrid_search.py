@@ -143,7 +143,6 @@ class HybridSearchService:
                     is_rate_error = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "QUOTA"])
                     
                     if is_rate_error:
-                        self._rate_limiter.force_wait(65.0)
                         if akm:
                             logger.warning(
                                 "Rate limit (429) для embeddings (попытка %d/%d). Ротация ключа... (Key: ...%s)",
@@ -153,8 +152,11 @@ class HybridSearchService:
                             
                             if akm.is_all_exhausted():
                                 logger.error("Все API ключи исчерпаны для эмбеддингов!")
+                                self._rate_limiter.force_wait(65.0)
                                 from src.core.exceptions import SearchError
                                 raise SearchError(f"Embedding quota exceeded for all keys: {e}") from e
+                        else:
+                            self._rate_limiter.force_wait(65.0)
                         continue
                     
                     logger.error("Ошибка при генерации вектора запроса: %s", e)
